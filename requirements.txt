@@ -1,0 +1,43 @@
+# requirements.txt
+
+# Core
+
+python-dotenv
+pyyaml
+numpy
+pandas
+
+# Video Processing
+
+opencv-python
+ffmpeg-python
+moviepy
+
+# OCR
+
+paddleocr
+paddlepaddle
+
+# Speech Recognition
+
+openai-whisper
+
+# Computer Vision
+
+mediapipe
+
+# AI / Text Processing
+
+openai
+anthropic
+
+# Utilities
+
+tqdm
+rich
+requests
+
+# Testing
+
+pytest
+pytest-cov

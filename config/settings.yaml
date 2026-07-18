@@ -1,0 +1,92 @@
+processing:
+  mode: "production"
+  preserve_quality: true
+
+video:
+  input_format: "mp4"
+  output_format: "mp4"
+  codec: "h264"
+  fps: 30
+  # Visually-lossless quality used for all re-encodes.
+  crf: 19
+  preset: "medium"
+
+social:
+  vertical_resolution:
+    width: 1080
+    height: 1920
+  # Vertical framing = blurred-background FIT (NOT a tight crop). A tight 9:16
+  # crop of 720p clips the shoulders; instead fit a wide foreground and fill the
+  # top/bottom bands with a blurred, darkened copy. Keeps both shoulders visible.
+  framing:
+    mode: "blurred-fit"
+    # foreground crop from 1280x720 source (removes the StreamYard bottom banner):
+    foreground_crop: "555:588:362:0"   # w:h:x:y  -> scaled to 1080 wide (~1080x1144)
+    background: "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
+    enhance: "eq=brightness=0.02:contrast=1.05:saturation=1.04,unsharp=5:5:0.4"
+  audio_loudnorm: "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+# StreamYard question overlay detection (see pipeline/detect_questions_streamyard.py)
+ocr:
+  engine: "tesseract"          # banner is clean black-on-white; Tesseract is best+reliable here
+  language: "eng"              # Roman-Urdu is Latin script -> eng data suffices
+  confidence_threshold: 0.80
+  streamyard_banner:
+    sample_seconds: 1.5
+    white_fraction_threshold: 0.25   # bottom-band whiteness => banner present
+    change_spike: 0.09               # banner frame-diff => question text changed
+    cluster_seconds: 6.0
+    gapfill_seconds: 4.5
+    min_duration_seconds: 20.0
+    band_roi: [0.84, 0.99, 0.03, 0.97]   # y0,y1,x0,x1 fractions (whiteness)
+    text_roi: [0.85, 0.99, 0.06, 0.94]   # y0,y1,x0,x1 fractions (diff/OCR)
+  # NOTE: pixel-diff cannot split same-asker back-to-back questions or catch
+  # sub-threshold changes -> ALWAYS verify boundaries + read text by eye.
+
+speech:
+  engine: "whisper"
+  model: "medium"              # empirical balance; use large-v3 for best captions
+  language: "ur"               # Urdu speech; transcript is Urdu-script, then
+                               # hand-transliterated to Roman Urdu for captions
+  condition_on_previous_text: false   # reduces hallucination loops
+  no_speech_threshold: 0.5
+  compression_ratio_threshold: 2.2
+
+ai:
+  hook_analysis:
+    enabled: true
+    minimum_score: 7
+  scoring:
+    enabled: true
+
+# Per-video short/reel assembly (see pipeline/build_reel_example.py)
+reel:
+  card_seconds: 3.6
+  outro_seconds: 4.8
+  # in/out window is chosen PER video (trim the question re-read + tangents).
+  # Q1 example used 00:09 - 02:24 of the extracted question clip.
+
+enhancement:
+  audio_normalization: true
+  noise_reduction: true
+  sharpening: true
+  color_correction: true
+
+storage:
+  input_folder: "INPUT"
+  output_folder: "OUTPUT"
+  approved_folder: "READY_TO_UPLOAD"
+  temp_folder: "TEMP"
+
+logging:
+  enabled: true
+  file: "logs/processing.log"
+  level: "INFO"
+
+# Environment facts that shaped the pipeline (macOS, system Python 3.9):
+#   * ffmpeg (brew) has NO drawtext and NO libass -> all text via Pillow PNG
+#     overlays composited with `overlay`; timed caption layers via qtrle alpha.
+#   * opencv-python-headless is 5.0 (no legacy Haar CascadeClassifier; has
+#     FaceDetectorYN). Speaker is centered, so framing uses a fixed crop.
+#   * ffmpeg `overlay` extends to the LONGEST input -> always cap composited
+#     bodies with shortest=1 and an explicit -t (else the tail freezes silently).

@@ -1,0 +1,101 @@
+creator:
+  name: "Rao Waqas Akram"
+  handle: "@raowaqasakram"
+  # Title shown on all videos (name tag, question-card footer, outro).
+  professional_title: "Sr. Software Engineer | Mentor"
+  niche:
+    - Software Engineering
+    - AI
+    - Java
+    - Cloud
+    - Developer Career
+
+brand:
+  style: "premium-tech"
+  personality:
+    - professional
+    - educational
+    - trustworthy
+    - modern
+
+fonts:
+  # macOS system fonts (this ffmpeg has NO drawtext/libass; text is rendered as
+  # transparent PNGs with Pillow and composited via ffmpeg `overlay`).
+  primary: "/System/Library/Fonts/SFNS.ttf"        # SF, premium/Apple feel
+  fallback_bold: "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+
+colors:
+  text: "#FFFFFF"
+  accent: "#00AEEF"
+  background: "#0B0F14"       # near-black premium (cards/outro)
+  secondary_text: "#CCCCCC"
+
+captions:
+  enabled: true
+  # Spoken language is Urdu + English tech terms -> captions are ROMAN URDU
+  # (Latin) with English tech words preserved (see PROMPTS.md #14). Urdu-script
+  # is intentionally avoided: it is off-brand and cannot be shaped by Pillow.
+  language: "roman-urdu"
+  max_lines: 2
+  position: "lower-band"      # sits in the bottom blurred band (center_y ~1600)
+  center_y: 1600
+  font_size: 60
+  bold_keywords: true
+  bar_fill: [10, 12, 16, 205]  # semi-opaque dark rounded bar
+  animation:
+    type: "cut"                # per-block; libass unavailable for karaoke
+  # Policy: NEVER fabricate captions over unclear audio. If ASR hallucinates
+  # (repeated tokens), omit captions for that stretch or hand-correct.
+
+keyword_highlighting:
+  enabled: true
+  keywords:
+    - Java
+    - Spring Boot
+    - Docker
+    - Kubernetes
+    - AI
+    - Machine Learning
+    - AWS
+    - Azure
+    - Cloud
+    - System Design
+    - Microservices
+    - Architecture
+    # generic startup/career terms also highlighted when present
+    - startup
+    - tech
+    - company
+    - idea
+    - investment
+    - team
+    - hire
+    - business
+    - services
+    - products
+
+question_card:
+  enabled: true
+  duration_seconds: 3.6
+  style: "premium-dark"        # accent 'VIEWER QUESTION' pill + quote + footer
+
+name_tag:
+  enabled: true
+  position: "top-left"         # top during intro so it never collides with captions
+  duration_seconds: 5
+
+outro:
+  enabled: true                # appended to EVERY video
+  duration_seconds: 4.8
+  animated: true               # logos pop/slide in staggered (NOT a static image)
+  heading: ["LIKE  •  SUBSCRIBE", "& FOLLOW"]
+  socials:                     # drawn as icons (no network); order = display order
+    - youtube
+    - facebook
+    - tiktok
+    - linkedin
+  handle: "@raowaqasakram"
+
+thumbnail:
+  style: "clean-tech"
+  max_words: 5
