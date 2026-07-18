@@ -29,6 +29,32 @@ livestream into per-question vertical videos + hook reels. First proven on
 
 ---
 
+## Quick path — one command per question (reusable, low-token)
+
+Once a clip is cut, the whole reel is built by **one config-driven command** — no
+per-video model work beyond authoring the small inputs. This is the runtime path;
+sections 1–6 below explain the internals.
+
+```bash
+# 1) make the folder + a config template
+mkdir -p "INPUT/<day>/Clips/Q<N>"
+python3 pipeline/process_question.py "<clip>.mp4" "INPUT/<day>/Clips/Q<N>"   # writes config.json template
+# 2) fill in config.json (question, asker, video_title[catchy], description, hashtags),
+#    add captions.json (Roman Urdu; optional), then run again:
+python3 pipeline/process_question.py "<clip>.mp4" "INPUT/<day>/Clips/Q<N>"
+```
+
+It auto-detects screen shares, builds the **screen-share-aware body** (stacked: shared
+screen on top, camera below) — cached as `_body.mp4` (`--force` to rebuild) — then
+assembles **card → body → captions → cinematic outro** and writes the upload
+deliverables (**title / thumbnail_title / description / hashtags / metadata.json** — title
+must be **catchy**). Per-video creative inputs: `config.json` fields + `captions.json`.
+
+Reusable modules: `pipeline/screenshare_vertical.py` (framing, multi-share),
+`pipeline/transcribe.py` (local Whisper → SRT draft), `pipeline/build_reel.py`
+(assembly), `pipeline/process_question.py` (orchestrator). Worked example:
+`INPUT/17th July 2026/Clips/Q16/` (`config.json` + `captions.json`).
+
 ## 1. Detect questions (automated draft ✋ verify)
 
 ```bash

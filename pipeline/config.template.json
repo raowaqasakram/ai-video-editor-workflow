@@ -1,0 +1,25 @@
+{
+  "question": "REPLACE WITH THE VIEWER QUESTION",
+  "asker": "@handle",
+  "name": "Rao Waqas Akram",
+  "title": "Sr. Software Engineer | Mentor",
+  "shares": null,
+  "captions": "captions.json",
+  "outro": null,
+  "out_name": "REEL.mp4",
+  "video_title": "CATCHY TITLE UNDER 70 CHARS",
+  "thumbnail_title": "SHORT PUNCHY TEXT",
+  "description": "2-4 line description + key takeaways.\n\nQuestion by @handle.",
+  "hashtags": [
+    "#SoftwareEngineering",
+    "#DeveloperCareer"
+  ],
+  "scores": {
+    "hook": 0,
+    "educational_value": 0,
+    "developer_relevance": 0,
+    "shareability": 0,
+    "virality_potential": 0
+  },
+  "notes": ""
+}

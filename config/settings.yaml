@@ -24,6 +24,27 @@ social:
     foreground_crop: "555:588:362:0"   # w:h:x:y  -> scaled to 1080 wide (~1080x1144)
     background: "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
     enhance: "eq=brightness=0.02:contrast=1.05:saturation=1.04,unsharp=5:5:0.4"
+  # Screen-share segments are framed DIFFERENTLY (see pipeline/screenshare_vertical.py).
+  # When the presenter shares their screen, StreamYard uses a FIXED layout: shared
+  # screen in a constant rectangle on the right, camera PIP on the left. In the
+  # vertical we DROP the face and show the whole shared screen, zoomed to fit so
+  # everything stays readable (user rule) — inside a branded rounded window.
+  screen_share:
+    # detection: StreamYard paints a cyan/green gradient bg in share mode; flag a
+    # frame when its top-left corner is strongly blue-over-red (B-R > 25, G > 120).
+    detect:
+      thumb: "320x180"
+      corner_roi: [0, 60, 0, 90]       # y0,y1,x0,x1 in the thumbnail
+      blue_minus_red_min: 25
+      green_min: 120
+      min_segment_seconds: 3.0
+    # fixed shared-screen rectangle inside the 1280x720 canvas (measured):
+    source_crop: "1022:410:248:116"    # w:h:x:y  (bottom is under SY's own banner)
+    # placement of the shared screen in the 1080x1920 vertical frame:
+    screen_width: 1004                 # height derived to keep aspect (~403)
+    screen_top: 655
+    corner_radius: 18
+    show_face: false                   # never show the camera during a screen share
   audio_loudnorm: "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 # StreamYard question overlay detection (see pipeline/detect_questions_streamyard.py)
