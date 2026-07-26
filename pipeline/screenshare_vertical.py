@@ -57,15 +57,26 @@ FACE_PIP_CROP = (232, 158, 8, 282)      # w, h, x, y
 
 # Stacked layout: shared screen on TOP, speaker camera BELOW (user's spec), so
 # both are visible. Both sit in branded rounded windows.
+#
+# Both wells sit HIGHER than they originally did. Captions moved up to clear the
+# platform UI band (overlays.CAPTION_CENTER_Y = 1330, so a two-line bar starts at
+# y=1212); at the old FACE_Y=940 the camera well ran to 1321 and the caption would
+# have covered its bottom third. The vertical budget is therefore:
+#
+#     name tag ends 248 | gap | screen (~405) | gap | camera (~381) | caption 1212
+#
+# with the ~188px of slack split into three gaps. Do not lower these without
+# also lowering the caption, and vice versa — the constants are coupled and
+# tests/test_pipeline_quality.py asserts they do not overlap.
 SCREEN_W = 1010
 SCREEN_H = round(SHARE_CROP[1] * SCREEN_W / SHARE_CROP[0])   # keep aspect (~405)
 SCREEN_X = (W - SCREEN_W) // 2
-SCREEN_Y = 380                       # both wells sit lower (bottom was too empty)
+SCREEN_Y = 308                       # 60px below the name tag
 
 FACE_W = 560
 FACE_H = round(FACE_PIP_CROP[1] * FACE_W / FACE_PIP_CROP[0])  # keep aspect (~381)
 FACE_X = (W - FACE_W) // 2
-FACE_Y = 940                         # camera below the screen; clear of captions (~1520)
+FACE_Y = 781                         # ends ~1162, clear of the caption bar at 1212
 RADIUS = 18
 
 # Face-only framing (blurred-fit, from config/settings.yaml -> social.framing)

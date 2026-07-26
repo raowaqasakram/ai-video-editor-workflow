@@ -24,7 +24,7 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "out_name":  "REEL.mp4",
   "auto_grade":   true,       # measured colour correction (pipeline/grade.py)
   "denoise":      false,      # gentle noise reduction — only for rough audio
-  "caption_safe": false       # lift captions clear of the platform UI band
+  "caption_y":    null        # null = the safe default (overlays.CAPTION_CENTER_Y)
 }
 
 Re-runs are cheap: the heavy body render is cached (delete _body.mp4 or pass
@@ -67,7 +67,7 @@ TEMPLATE = {
     # render options (safe defaults — see the module docstring):
     "auto_grade": True,
     "denoise": False,
-    "caption_safe": False,
+    "caption_y": None,
     # upload metadata (ALWAYS filled — catchy title + description + hashtags):
     "video_title": "CATCHY TITLE UNDER 70 CHARS",
     "thumbnail_title": "SHORT PUNCHY THUMBNAIL TEXT",
@@ -176,7 +176,7 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         out_name=cfg.get("out_name", "REEL.mp4"),
         quality=quality,
         denoise=cfg.get("denoise", False),
-        caption_safe=cfg.get("caption_safe", False))
+        caption_y=cfg.get("caption_y"))
 
     # 4) upload deliverables (title/description/hashtags/metadata) — always
     _write_metadata(cfg, out_dir, reel)

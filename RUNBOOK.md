@@ -318,7 +318,8 @@ INPUT/<day>/Clips/Q<N>/
 
 ## Locked recipe (do not silently change)
 - Framing: **blurred-fit**, both shoulders visible, banner removed.
-- Captions: **Roman Urdu** + English tech terms, 2-line, keyword accent, lower band.
+- Captions: **Roman Urdu** + English tech terms, 2-line, keyword accent, centred at
+  y=1330 — **inside the platform safe zone** (see below), not the old lower band.
 - Title on all videos: **"Sr. Software Engineer | Mentor"**; handle **@raowaqasakram**.
 - **Animated** like/subscribe/follow outro with YouTube/Facebook/TikTok/LinkedIn on
   **every** video.
@@ -326,17 +327,40 @@ INPUT/<day>/Clips/Q<N>/
 - **Picture encoded at most twice, audio once.** Never reintroduce the concat *filter*
   into the final join, and never re-encode audio in an assembly stage.
 
-## Open decision: the caption safe zone
+## Caption safe zone (resolved 2026-07-26)
 
-Captions currently centre at y=1600, putting the bar bottom ~210px from the frame bottom.
-TikTok, Reels and Shorts paint the username / description / audio row and the right action
-rail over roughly the **bottom 420–480px** of a 1080×1920 frame, so part of the caption bar
-can be covered in-feed.
+TikTok, Reels, Shorts and Facebook Reels paint their username / description / audio row and
+the right-hand action rail over the bottom of the frame — roughly the **bottom 320px** for
+organic posts, and **480px** under TikTok's strictest guidance. The old caption position put
+the bar's bottom edge only ~212px up, i.e. **entirely inside** the band the apps write over,
+so captions could be partly covered in-feed.
 
-`"caption_safe": true` in a question's `config.json` lifts the block to y=1450
-(`overlays.CAPTION_CENTER_Y_SAFE`), which clears the camera well at y≈1321 in the
-screen-share layout. It is **off by default** because it moves locked framing — check one
-export on a phone before switching it on everywhere.
+Captions are now centred at **y=1330** (`overlays.CAPTION_CENTER_Y`), which puts even a
+two-line bar at 1212–1438 — **482px clear**, so it survives the strictest zone on every app.
+The caption sits over the speaker's chest and never over the face.
+
+The value is driven by the two-line case, which is the maximum `make_caption` renders:
+
+```
+bar_bottom = center + line_h + 24   ->   center <= H - 480 - 108   ->   center <= 1332
+```
+
+**The screen-share windows moved up with it.** `SCREEN_Y` 380→308 and `FACE_Y` 940→781: at
+the old position the camera well ran to y=1321 and the raised caption would have covered its
+bottom third. It now ends at ~1162, clearing the bar top at 1212. The vertical budget is:
+
+```
+name tag ends 248 | gap | shared screen (~405) | gap | camera (~381) | caption 1212
+```
+
+⚠️ **These two constants are coupled.** Do not raise the caption without checking the camera
+well, or lower the wells without checking the caption. `tests/test_pipeline_quality.py`
+asserts both bounds (clearance from the UI band, and no overlap with the well), so a drift in
+either direction fails the suite rather than shipping a covered caption.
+
+Per-question override if ever needed: `"caption_y": <number>` in `config.json` (default
+`null` = the safe value). `overlays.CAPTION_CENTER_Y_LEGACY = 1600` is retained only to
+document what changed — do not ship it.
 
 ## Horizontal output (planned)
 

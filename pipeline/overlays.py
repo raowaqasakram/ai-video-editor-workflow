@@ -116,28 +116,44 @@ def make_lower_third(name, title, out):
     print("lower-third ->", out)
 
 
-# Vertical centre of the caption block.
+# Vertical centre of the caption block — a platform safe-zone rule, not taste.
 #
-# CAPTION_CENTER_Y is the shipped value (locked recipe: captions in the lower
-# band). CAPTION_CENTER_Y_SAFE lifts the block clear of the platform UI: TikTok,
-# Reels and Shorts paint the username / description / audio row and the right
-# action rail over roughly the bottom 420-480px of a 1080x1920 frame, and at the
-# default the bar bottom sits only ~210px up, so part of it can be covered
-# in-feed. Opt in per video with `"caption_safe": true` — check one export on a
-# phone before switching it on everywhere, since it does move the framing.
-CAPTION_CENTER_Y = 1600
-CAPTION_CENTER_Y_SAFE = 1450
+# TikTok, Reels, Shorts and Facebook Reels paint their own username, description,
+# audio row and right-hand action rail over the bottom of the frame. Published
+# safe zones for 1080x1920 put that at ~320px from the bottom for organic posts,
+# and ~480px under TikTok's strictest guidance (which also reserves room for a
+# CTA button).
+#
+# The original 1600 put the caption bar's bottom edge only ~212px up — i.e.
+# entirely inside the band the app writes over, so captions could be partly
+# covered in-feed on a phone. 1330 puts a two-line bar at 1212..1438, so even the
+# tallest caption clears the full 480px zone, while still sitting over the
+# speaker's chest and never over the face.
+#
+# The value is driven by the two-line case (the maximum make_caption renders):
+#     bar_bottom = center + line_h + 24  ->  center <= H - 480 - 108
+#
+# Anything raised here must also clear the screen-share camera well (see
+# screenshare_vertical.FACE_Y/FACE_H) — the two constants are coupled, and
+# tests/test_pipeline_quality.py asserts both bounds.
+CAPTION_CENTER_Y = 1330
+
+# The pre-2026-07-26 position, kept only to document what changed. Do not ship it.
+CAPTION_CENTER_Y_LEGACY = 1600
+
+# Bottom band reserved for platform UI; nothing rendered should intrude on it.
+PLATFORM_UI_RESERVED_PX = 480
 
 
-def make_caption(text, highlights, out, safe_zone=False):
+def make_caption(text, highlights, out, center_y=None):
     """Render a transparent lower-third caption PNG with keyword highlighting.
 
     Args:
         text: Caption text (Roman-Urdu + English).
         highlights: Iterable of lowercased keywords to colour in the accent.
         out: Output PNG path.
-        safe_zone: Lift the block to CAPTION_CENTER_Y_SAFE so the platform UI
-            cannot cover it.
+        center_y: Vertical centre of the block. Defaults to CAPTION_CENTER_Y;
+            override only with a value that still clears the platform UI band.
     """
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -148,7 +164,7 @@ def make_caption(text, highlights, out, safe_zone=False):
     line_h = 84
     pad_x, pad_y = 46, 34
     block_h = line_h * len(lines)
-    center = CAPTION_CENTER_Y_SAFE if safe_zone else CAPTION_CENTER_Y
+    center = CAPTION_CENTER_Y if center_y is None else int(center_y)
     top = center - block_h // 2
     widest = max(d.textlength(ln, font=cf) for ln in lines)
     bar = [(W - widest) / 2 - pad_x, top - pad_y,

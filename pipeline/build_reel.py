@@ -62,7 +62,7 @@ def _auto_hl(text):
             if w.strip(".,!?/()").lower() in KEYWORDS]
 
 
-def _caption_layer(caps, body_dur, work, transparent, p, caption_safe=False):
+def _caption_layer(caps, body_dur, work, transparent, p, caption_y=None):
     """Render caption PNGs and assemble a qtrle alpha layer over [0, body_dur]."""
     cap_dir = os.path.join(work, "caps")
     os.makedirs(cap_dir, exist_ok=True)
@@ -71,7 +71,7 @@ def _caption_layer(caps, body_dur, work, transparent, p, caption_safe=False):
         s, e, text = cap[0], cap[1], cap[2]
         hl = cap[3] if len(cap) > 3 and cap[3] else _auto_hl(text)
         png = os.path.join(cap_dir, f"cap_{i:03d}.png")
-        ro.make_caption(text, hl, png, safe_zone=caption_safe)
+        ro.make_caption(text, hl, png, center_y=caption_y)
         items.append((round(float(s), 2), round(float(e), 2), png))
 
     lines, t = [], 0.0
@@ -103,7 +103,7 @@ def _caption_layer(caps, body_dur, work, transparent, p, caption_safe=False):
 
 
 def _composite_body(body, work, caps, tech_layer, lt_png, bdur, p,
-                    transparent, caption_safe):
+                    transparent, caption_y):
     """Overlay captions + tech chips + name tag onto the body. The one re-encode.
 
     `shortest=1` plus an explicit `-t` is not optional: ffmpeg's overlay extends
@@ -117,7 +117,7 @@ def _composite_body(body, work, caps, tech_layer, lt_png, bdur, p,
     chain, src, idx = [], "[0:v]", 1
 
     if caps:
-        cmd += ["-i", _caption_layer(caps, bdur, work, transparent, p, caption_safe)]
+        cmd += ["-i", _caption_layer(caps, bdur, work, transparent, p, caption_y)]
         chain.append(f"{src}[{idx}:v]overlay=0:0:shortest=1[vc]")
         src, idx = "[vc]", idx + 1
     if tech_layer:
@@ -154,7 +154,7 @@ def _outro_part(outro, p):
 def build(body, out_dir, question, asker, name, title,
           caps=None, outro=None, out_name="REEL.mp4", tech=None,
           quality="final", orientation="vertical", denoise=False,
-          caption_safe=False):
+          caption_y=None):
     """Assemble the finished reel and return its path.
 
     Args:
@@ -168,8 +168,9 @@ def build(body, out_dir, question, asker, name, title,
         quality: "final" ships; "preview"/"draft" for fast iteration.
         orientation: delivery canvas (see pipeline/encode.py).
         denoise: gentle noise reduction in the audio master (off by default).
-        caption_safe: raise captions clear of the platform UI band. Off by
-            default because it changes the locked framing — see RUNBOOK.
+        caption_y: override the caption block's vertical centre. Defaults to
+            overlays.CAPTION_CENTER_Y, which is set to clear the platform UI
+            band — only override with a value that still clears it.
     """
     os.makedirs(out_dir, exist_ok=True)
     work = os.path.join(out_dir, "_reel_work")
@@ -198,7 +199,7 @@ def build(body, out_dir, question, asker, name, title,
 
     print(f"assembling reel [{p['quality']} {p['w']}x{p['h']} crf{p['crf']}]")
     body_final = _composite_body(body, work, caps, tech_layer, lt_png, bdur, p,
-                                 transparent, caption_safe)
+                                 transparent, caption_y)
 
     card_mp4 = encode.still_clip(card_png, CARD_DUR, os.path.join(work, "card.mp4"), p)
     outro_mp4 = _outro_part(outro, p)
@@ -231,4 +232,4 @@ if __name__ == "__main__":
           out_name=meta.get("out_name", "REEL.mp4"), tech=meta.get("tech"),
           quality=meta.get("quality", "final"),
           denoise=meta.get("denoise", False),
-          caption_safe=meta.get("caption_safe", False))
+          caption_y=meta.get("caption_y"))

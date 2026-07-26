@@ -21,9 +21,57 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
 import audio_master  # noqa: E402
 import encode  # noqa: E402
 import grade  # noqa: E402
+import overlays  # noqa: E402
+import screenshare_vertical as ssv  # noqa: E402
 import silence  # noqa: E402
 import transcribe  # noqa: E402
 import verify_reel  # noqa: E402
+
+
+# --- caption placement (platform safe zone) -----------------------------------
+#
+# These two constants are coupled: raising the caption to clear the app UI can
+# push it onto the screen-share camera well. Both bounds are asserted so neither
+# can be nudged in isolation.
+
+def _caption_bar(lines, center=None):
+    """(top, bottom) of the rendered caption bar, mirroring make_caption's maths."""
+    center = overlays.CAPTION_CENTER_Y if center is None else center
+    line_h, pad_y = 84, 34
+    block_h = line_h * lines
+    top = center - block_h // 2
+    return top - pad_y, top + block_h + pad_y - 10
+
+
+@pytest.mark.parametrize("lines", [1, 2])
+def test_captions_clear_the_platform_ui_band(lines):
+    """Captions must not intrude on the bottom band the apps write over."""
+    _, bottom = _caption_bar(lines)
+    clear_px = overlays.H - bottom
+    assert clear_px >= overlays.PLATFORM_UI_RESERVED_PX, (
+        "a %d-line caption ends %dpx from the bottom; apps reserve %dpx"
+        % (lines, clear_px, overlays.PLATFORM_UI_RESERVED_PX))
+
+
+def test_captions_do_not_cover_the_screen_share_camera_well():
+    """The tallest caption must start below the stacked layout's camera well."""
+    top, _ = _caption_bar(2)
+    well_bottom = ssv.FACE_Y + ssv.FACE_H
+    assert top > well_bottom, (
+        "caption starts at %d but the camera well ends at %d" % (top, well_bottom))
+
+
+def test_screen_share_wells_clear_the_name_tag():
+    """The shared-screen well must not collide with the name tag above it."""
+    name_tag_bottom = 248            # _brand_bg draws it at y=110, height 138
+    assert ssv.SCREEN_Y > name_tag_bottom
+    assert ssv.FACE_Y > ssv.SCREEN_Y + ssv.SCREEN_H
+
+
+def test_legacy_caption_position_would_fail_the_safe_zone():
+    """Guards the fix: the old value is retained only as documentation."""
+    _, bottom = _caption_bar(2, center=overlays.CAPTION_CENTER_Y_LEGACY)
+    assert (overlays.H - bottom) < overlays.PLATFORM_UI_RESERVED_PX
 
 
 # --- encode profiles ----------------------------------------------------------
