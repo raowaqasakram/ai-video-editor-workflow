@@ -22,6 +22,7 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
                               # | inline [[s,e,"LABEL","icon"]] | null
   "outro":     null,          # null = cinematic brand outro
   "out_name":  "REEL.mp4",
+  "style":        "blur",     # camera framing: blur | studio_bands | studio_set
   "auto_grade":   true,       # measured colour correction (pipeline/grade.py)
   "denoise":      false,      # gentle noise reduction — only for rough audio
   "caption_y":    null        # null = the safe default (overlays.CAPTION_CENTER_Y)
@@ -65,6 +66,7 @@ TEMPLATE = {
     "outro": None,
     "out_name": "REEL.mp4",
     # render options (safe defaults — see the module docstring):
+    "style": "blur",
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
@@ -143,11 +145,16 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
 
     # 1) body (screen-share-aware, cached). Cheap-quality bodies are cached under
     #    their own name so an iteration pass can never overwrite the shipping one.
-    body = os.path.join(out_dir,
-                        "_body.mp4" if quality == "final" else f"_body.{quality}.mp4")
+    # The style is part of the cache key: switching look must not silently reuse
+    # a body rendered in the previous one.
+    style = cfg.get("style", "blur")
+    suffix = "" if quality == "final" else f".{quality}"
+    suffix += "" if style == "blur" else f".{style}"
+    body = os.path.join(out_dir, f"_body{suffix}.mp4")
     if force or not os.path.exists(body):
         ssv.render(clip, body, shares=cfg.get("shares"), quality=quality,
-                   auto_grade=cfg.get("auto_grade", True))
+                   auto_grade=cfg.get("auto_grade", True),
+                   style=cfg.get("style", "blur"))
     else:
         print(f"body cached -> {body} (pass --force to rebuild)")
 

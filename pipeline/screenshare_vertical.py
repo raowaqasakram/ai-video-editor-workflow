@@ -36,6 +36,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backdrop  # noqa: E402  (designed studio plates)
 import encode  # noqa: E402  (canonical profiles + ffmpeg plumbing)
 import grade  # noqa: E402   (measured auto colour correction)
 import overlays as ro  # noqa: E402  (font loader + brand constants)
@@ -95,6 +96,43 @@ FACE_SHARPEN = "unsharp=5:5:0.4"    # the colour half of the old FACE_ENH is now
 GRADE_PRE_FILTER = "crop=" + FACE_FG_CROP
 GRADE_SAMPLE_SECONDS = 20.0         # enough to characterise the lighting, cheap to read
 
+# Framing styles for non-share (camera) segments.
+#
+#   blur          the original: bands filled with a blurred copy of the room.
+#   studio_bands  bands replaced by a designed studio plate; footage stays FULL
+#                 width, so the speaker's face keeps its current size.
+#   studio_set    footage inset in a rounded window on the plate, so more of the
+#                 set shows. More designed, smaller face.
+#
+# The studio styles composite over a static PNG (pipeline/backdrop.py) instead of
+# running a full-resolution boxblur, so they are also cheaper than the default.
+STYLES = ("blur", "studio_bands", "studio_set")
+
+# studio_set window geometry. 900 wide keeps the window's bottom at ~1194, clear of
+# the caption bar at 1212 (see overlays.CAPTION_CENTER_Y).
+#
+# BOTH dimensions are explicit, and that is deliberate. FACE_FG_CROP is 555 wide —
+# an ODD number — and yuv420p needs even chroma dimensions, so ffmpeg silently
+# crops 554 instead. A Python-side height derived from 555 therefore disagrees with
+# what ffmpeg actually produces from `scale=900:-1`, and `alphamerge` then fails
+# with "input frame sizes do not match" (900x955 vs 900x954). Pinning the height
+# makes the mask and the scaled footage agree by construction; the 0.13% aspect
+# change against the true 554:588 is invisible.
+SET_WIN_W = 900
+SET_WIN_H = 954
+SET_WIN_Y = 240
+SET_RADIUS = 26
+
+# Lens character for the studio styles only, never for `blur` (which must keep the
+# shipped look byte-for-byte). Real lenses vignette, so the composite gets one.
+#
+# Grain is NOT applied here as an ffmpeg filter. `noise` re-randomises every frame,
+# which destroys inter-frame compression: a 26s sample came out at 18.7 Mbps / 72 MB
+# instead of ~2 Mbps. Static grain is baked into the backdrop plate instead (free —
+# it does not change between frames) and the footage already carries its own sensor
+# grain, so the composite still reads as shot rather than rendered.
+STUDIO_VIGNETTE = "vignette"
+
 # How many segment encodes run at once. x264 already threads internally, so this
 # buys per-process ramp-up on multi-share clips rather than linear scaling.
 WORKERS = 3
@@ -143,9 +181,11 @@ def detect_share_segments(video, fps=10, min_len=3.0):
 # ---------------------------------------------------------------------------
 # Brand background + rounded-corner mask (Pillow)
 # ---------------------------------------------------------------------------
-def _rounded_mask(path, w, h):
+def _rounded_mask(path, w, h, radius=None):
     m = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1], radius=RADIUS, fill=255)
+    ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1],
+                                       radius=RADIUS if radius is None else radius,
+                                       fill=255)
     m.save(path)
 
 
@@ -234,6 +274,45 @@ def _encode_face(video, start, dur, out, p, grade_vf):
     return out
 
 
+def _encode_studio(video, start, dur, out, p, grade_vf, plate_png, inset,
+                   mask_png=None):
+    """Composite the camera footage onto a static studio plate.
+
+    Args:
+        plate_png: backdrop plate from pipeline/backdrop.py.
+        inset: False -> footage at full width, centred (studio_bands).
+               True  -> footage in a rounded window (studio_set), which needs
+               `mask_png` for the corners.
+
+    `setpts=PTS-STARTPTS` is essential: the seeked video carries a large PTS while
+    the looped plate sits at PTS 0, so overlay would never sync them. The plate is
+    `-loop 1` (infinite), so the OUTPUT `-t` is what stops the encode.
+    """
+    enhance = ",".join(f for f in (grade_vf, FACE_SHARPEN) if f)
+    lens = STUDIO_VIGNETTE
+    inputs = ["-loop", "1", "-i", plate_png]
+
+    if not inset:
+        vf = (f"[0:v]crop={FACE_FG_CROP},scale={W}:-1,{enhance},"
+              f"setpts=PTS-STARTPTS[fg];"
+              f"[1:v][fg]overlay=(W-w)/2:(H-h)/2{_out_scale(p)},"
+              f"{lens},format=yuv420p[o]")
+    else:
+        inputs += ["-loop", "1", "-i", mask_png]
+        x = (W - SET_WIN_W) // 2
+        vf = (f"[0:v]crop={FACE_FG_CROP},scale={SET_WIN_W}:{SET_WIN_H},{enhance},setsar=1,"
+              f"setpts=PTS-STARTPTS,format=rgba[fg];"
+              f"[2:v]format=gray[mk];[fg][mk]alphamerge[fa];"
+              f"[1:v][fa]overlay={x}:{SET_WIN_Y}{_out_scale(p)},"
+              f"{lens},format=yuv420p[o]")
+
+    encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video]
+               + inputs
+               + ["-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
+               + encode.video_args(p) + ["-loglevel", "error", out])
+    return out
+
+
 def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out, p, grade_vf):
     """Stacked framing: whole shared screen on top, camera PIP below.
 
@@ -299,7 +378,8 @@ def _measure_grade(video, timeline, workdir, enabled):
 
 
 def render(video, out, shares=None, workdir=None, quality="final",
-           orientation="vertical", auto_grade=True, workers=WORKERS):
+           orientation="vertical", auto_grade=True, workers=WORKERS,
+           style="blur"):
     """Build the screen-share-aware vertical for `video` -> `out`.
 
     Args:
@@ -310,9 +390,14 @@ def render(video, out, shares=None, workdir=None, quality="final",
         orientation: delivery canvas; only "vertical" is wired up for now.
         auto_grade: measure and apply the bounded colour correction.
         workers: parallel segment encodes.
+        style: camera-segment framing — see STYLES. Screen-share segments always
+            use the stacked layout regardless, because the shared screen has to
+            stay legible and a decorative plate would only steal room from it.
 
     The audio is muxed through **unprocessed** — mastering happens once, later.
     """
+    if style not in STYLES:
+        raise KeyError("unknown style %r (have: %s)" % (style, ", ".join(STYLES)))
     workdir = workdir or os.path.join(os.path.dirname(os.path.abspath(out)), "_ssv_work")
     os.makedirs(workdir, exist_ok=True)
     p = encode.profile(quality, orientation)
@@ -332,6 +417,14 @@ def render(video, out, shares=None, workdir=None, quality="final",
     _rounded_mask(smask_png, SCREEN_W, SCREEN_H)
     _rounded_mask(fmask_png, FACE_W, FACE_H)
 
+    # Studio styles need their backdrop plate (and, when inset, a corner mask).
+    plate_png = set_mask = None
+    if style != "blur":
+        plate_png = backdrop.plate(style, os.path.join(workdir, f"plate_{style}.png"))
+        if style == "studio_set":
+            set_mask = os.path.join(workdir, "set_mask.png")
+            _rounded_mask(set_mask, SET_WIN_W, SET_WIN_H, radius=SET_RADIUS)
+
     # Queue every segment, then encode them concurrently.
     jobs, parts = [], []
     for i, (s, e, kind) in enumerate(timeline):
@@ -339,7 +432,11 @@ def render(video, out, shares=None, workdir=None, quality="final",
         dur = round(e - s, 3)
         print(f"  [{kind}] {s:.2f}-{e:.2f}s ({dur:.2f}s) -> {os.path.basename(seg)}")
         if kind == "face":
-            jobs.append((video, s, dur, seg, p, grade_vf))
+            if style == "blur":
+                jobs.append((video, s, dur, seg, p, grade_vf))
+            else:
+                jobs.append((video, s, dur, seg, p, grade_vf, plate_png,
+                             style == "studio_set", set_mask))
         else:
             jobs.append((video, s, dur, bg_png, smask_png, fmask_png, seg, p, grade_vf))
         parts.append(seg)
@@ -347,8 +444,9 @@ def render(video, out, shares=None, workdir=None, quality="final",
     face_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "face"]
     share_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "share"]
     print(f"  encoding {len(parts)} segment(s), {min(workers, len(parts))} at a time"
-          f" [{p['quality']} {p['w']}x{p['h']} crf{p['crf']}]")
-    encode.parallel(_encode_face, face_jobs, workers=workers, label="face segment")
+          f" [{p['quality']} {p['w']}x{p['h']} crf{p['crf']} style={style}]")
+    encode.parallel(_encode_face if style == "blur" else _encode_studio,
+                    face_jobs, workers=workers, label="face segment")
     encode.parallel(_encode_share, share_jobs, workers=workers, label="share segment")
 
     # Concat the silent video parts, then mux the source audio back in.

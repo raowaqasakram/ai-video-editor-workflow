@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "pipeline"))
 
 import audio_master  # noqa: E402
+import backdrop  # noqa: E402
 import encode  # noqa: E402
 import grade  # noqa: E402
 import overlays  # noqa: E402
@@ -72,6 +73,54 @@ def test_legacy_caption_position_would_fail_the_safe_zone():
     """Guards the fix: the old value is retained only as documentation."""
     _, bottom = _caption_bar(2, center=overlays.CAPTION_CENTER_Y_LEGACY)
     assert (overlays.H - bottom) < overlays.PLATFORM_UI_RESERVED_PX
+
+
+# --- backdrop styles ----------------------------------------------------------
+
+def test_every_style_is_either_blur_or_a_real_plate():
+    """A style name with no backdrop recipe would fail only at render time."""
+    assert ssv.STYLES[0] == "blur"
+    assert set(ssv.STYLES[1:]) == set(backdrop.STYLES)
+
+
+def test_plate_is_rendered_at_the_delivery_canvas(tmp_path):
+    for style in backdrop.STYLES:
+        out = backdrop.plate(style, str(tmp_path / ("%s.png" % style)))
+        from PIL import Image
+        with Image.open(out) as im:
+            assert im.size == (backdrop.W, backdrop.H)
+
+
+def test_plate_is_cached_not_rebuilt(tmp_path):
+    """Plates are static; rebuilding one per question would be pure waste."""
+    path = str(tmp_path / "p.png")
+    backdrop.plate("studio_bands", path)
+    stamp = os.path.getmtime(path)
+    backdrop.plate("studio_bands", path)
+    assert os.path.getmtime(path) == stamp
+
+
+def test_unknown_backdrop_style_fails_loudly():
+    with pytest.raises(KeyError):
+        backdrop.plate("neon_cyberpunk", "/tmp/never_written.png")
+
+
+def test_studio_inset_window_clears_the_caption_bar():
+    """The studio_set window must not run under the captions."""
+    top, _ = _caption_bar(2)
+    assert ssv.SET_WIN_Y + ssv.SET_WIN_H < top
+
+
+def test_studio_inset_dimensions_are_even():
+    """Odd dimensions break yuv420p and desync the alphamerge mask."""
+    assert ssv.SET_WIN_W % 2 == 0
+    assert ssv.SET_WIN_H % 2 == 0
+
+
+def test_grain_is_not_a_temporal_ffmpeg_filter():
+    """Temporal `noise` destroyed inter-frame compression (18.7 Mbps). Baked instead."""
+    assert "noise" not in ssv.STUDIO_VIGNETTE
+    assert not hasattr(ssv, "STUDIO_GRAIN")
 
 
 # --- encode profiles ----------------------------------------------------------

@@ -1,43 +1,66 @@
-# requirements.txt
+# requirements.txt — what this project ACTUALLY imports.
+#
+# Rewritten 2026-07-26. The previous list was aspirational: it named paddleocr,
+# paddlepaddle, moviepy, pandas, python-dotenv, rich, openai and anthropic, none
+# of which are installed or imported anywhere. Deliberate exclusions are recorded
+# at the bottom so nobody "helpfully" adds them back.
+#
+# Runs on the system Python 3.9 on macOS arm64. Background matting has its own
+# environment — see the note at the end.
 
-# Core
-
-python-dotenv
-pyyaml
+# --- Core ---------------------------------------------------------------------
 numpy
-pandas
+pyyaml
 
-# Video Processing
+# --- Imaging / video ----------------------------------------------------------
+# All text is rendered with Pillow and composited by ffmpeg: this ffmpeg build has
+# no drawtext and no libass (see RUNBOOK "Environment gotchas").
+pillow
+# cv2, used by modules/ocr and modules/video. Headless: no GUI windows needed.
+# NOTE: v5 removed the legacy Haar CascadeClassifier. Framing uses a fixed crop
+# because the speaker is centred, so no face tracking is required.
+opencv-python-headless
 
-opencv-python
-ffmpeg-python
-moviepy
+# --- OCR ----------------------------------------------------------------------
+# Needs the Tesseract binary too:  brew install tesseract
+pytesseract
 
-# OCR
-
-paddleocr
-paddlepaddle
-
-# Speech Recognition
-
+# --- Speech -------------------------------------------------------------------
+# Pulls torch. Local only — no audio ever leaves this machine.
 openai-whisper
+# Listed explicitly because pipeline work uses torch directly (Robust Video
+# Matting for background replacement), not only as a whisper dependency.
+torch
 
-# Computer Vision
-
-mediapipe
-
-# AI / Text Processing
-
-openai
-anthropic
-
-# Utilities
-
-tqdm
-rich
-requests
-
-# Testing
-
+# --- Testing ------------------------------------------------------------------
 pytest
 pytest-cov
+
+# --- System binaries (not pip) ------------------------------------------------
+#   brew install ffmpeg tesseract
+# ffmpeg is invoked as a subprocess throughout; there is no Python ffmpeg binding.
+
+# --- Deliberately NOT here ----------------------------------------------------
+# paddleocr / paddlepaddle  painful on 3.9/arm64; the question banner is clean
+#                           black-on-white, where Tesseract is accurate enough.
+# moviepy / ffmpeg-python   the pipeline builds ffmpeg command lines directly so
+#                           it can control the encode profile exactly (see
+#                           pipeline/encode.py). A wrapper would hide that.
+# pandas / python-dotenv / rich   not imported anywhere.
+# openai / anthropic        this pipeline makes NO API calls. Model work happens
+#                           in the agent session, not at runtime — that is the
+#                           whole point of pipeline/*.py (minimise tokens per
+#                           video). Leaving these out also keeps API keys out of
+#                           the project entirely.
+# rembg / mediapipe / onnxruntime   installed in .venv-matting (Python 3.11), not
+#                           here: current releases need Python >= 3.10 and pulling
+#                           them into 3.9 would risk the working pipeline. For
+#                           video, Robust Video Matting on the torch above is the
+#                           better tool anyway — it is temporally stable, where
+#                           per-frame matting flickers.
+#
+# Background-matting environment (optional, only for background replacement):
+#   /opt/homebrew/bin/python3.11 -m venv .venv-matting
+#   .venv-matting/bin/pip install -U pip wheel
+#   .venv-matting/bin/pip install rembg onnxruntime mediapipe \
+#                                 opencv-python-headless pillow numpy
