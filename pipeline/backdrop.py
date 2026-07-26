@@ -47,6 +47,22 @@ STYLES = {
         "bokeh": [(150, 250, 46, 120), (930, 190, 34, 105), (250, 1760, 52, 95),
                   (860, 1700, 40, 110), (540, 1840, 30, 80)],
     },
+    # For the matted style. No panels: with the room removed there is a lot of
+    # visible backdrop, and repeating vertical strips read as wallpaper rather than
+    # a room. Depth instead comes from a wide overhead light pool, a soft floor
+    # gradient, and bokeh at mixed sizes/softness so the lights sit at different
+    # apparent distances.
+    "studio_real": {
+        "gradient": ((34, 40, 51), (7, 9, 13)),
+        "panels": None,
+        "pools": [(W // 2, 120, 900, 520, (48, 84, 112), 130),
+                  (W // 2, 1900, 1000, 360, (26, 44, 60), 90)],
+        "bokeh_rgb": ACCENT,
+        "bokeh_blur": 26,
+        "bokeh": [(120, 430, 70, 105), (960, 330, 52, 95), (250, 1300, 44, 80),
+                  (880, 1180, 62, 90), (150, 1650, 84, 70), (930, 1720, 48, 85),
+                  (540, 250, 34, 60)],
+    },
     "studio_set": {
         "gradient": ((30, 24, 20), (12, 10, 9)),
         "panels": ((255, 226, 190), 7, 12),
@@ -127,7 +143,8 @@ def plate(style, out_path, hairline=True):
 
     spec = STYLES[style]
     img = _gradient(*spec["gradient"])
-    img = _panels(img, *spec["panels"])
+    if spec["panels"]:
+        img = _panels(img, *spec["panels"])
     for pool in spec["pools"]:
         img = _pool(img, *pool)
     img = _bokeh(img, spec["bokeh"], spec["bokeh_rgb"], spec["bokeh_blur"])

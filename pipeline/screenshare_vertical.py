@@ -37,6 +37,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backdrop  # noqa: E402  (designed studio plates)
+import matte  # noqa: E402     (RVM background replacement)
 import encode  # noqa: E402  (canonical profiles + ffmpeg plumbing)
 import grade  # noqa: E402   (measured auto colour correction)
 import overlays as ro  # noqa: E402  (font loader + brand constants)
@@ -106,7 +107,13 @@ GRADE_SAMPLE_SECONDS = 20.0         # enough to characterise the lighting, cheap
 #
 # The studio styles composite over a static PNG (pipeline/backdrop.py) instead of
 # running a full-resolution boxblur, so they are also cheaper than the default.
-STYLES = ("blur", "studio_bands", "studio_set")
+STYLES = ("blur", "studio_bands", "studio_set", "studio_real")
+
+# studio_real replaces the background for real (RVM matting, pipeline/matte.py).
+# It is inherently sequential — RVM carries recurrent state between frames — and
+# heavy, so it runs one segment at a time regardless of `workers`.
+MATTE_STYLE = "studio_real"
+MATTE_PLATE_STYLE = "studio_real"    # its own plate: no panels, more depth cues
 
 # studio_set window geometry. 900 wide keeps the window's bottom at ~1194, clear of
 # the caption bar at 1212 (see overlays.CAPTION_CENTER_Y).
@@ -420,7 +427,9 @@ def render(video, out, shares=None, workdir=None, quality="final",
     # Studio styles need their backdrop plate (and, when inset, a corner mask).
     plate_png = set_mask = None
     if style != "blur":
-        plate_png = backdrop.plate(style, os.path.join(workdir, f"plate_{style}.png"))
+        plate_style = MATTE_PLATE_STYLE if style == MATTE_STYLE else style
+        plate_png = backdrop.plate(plate_style,
+                                   os.path.join(workdir, f"plate_{plate_style}.png"))
         if style == "studio_set":
             set_mask = os.path.join(workdir, "set_mask.png")
             _rounded_mask(set_mask, SET_WIN_W, SET_WIN_H, radius=SET_RADIUS)
@@ -434,6 +443,8 @@ def render(video, out, shares=None, workdir=None, quality="final",
         if kind == "face":
             if style == "blur":
                 jobs.append((video, s, dur, seg, p, grade_vf))
+            elif style == MATTE_STYLE:
+                jobs.append((video, s, dur, seg, p, grade_vf, plate_png))
             else:
                 jobs.append((video, s, dur, seg, p, grade_vf, plate_png,
                              style == "studio_set", set_mask))
@@ -445,8 +456,13 @@ def render(video, out, shares=None, workdir=None, quality="final",
     share_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "share"]
     print(f"  encoding {len(parts)} segment(s), {min(workers, len(parts))} at a time"
           f" [{p['quality']} {p['w']}x{p['h']} crf{p['crf']} style={style}]")
-    encode.parallel(_encode_face if style == "blur" else _encode_studio,
-                    face_jobs, workers=workers, label="face segment")
+    if style == "blur":
+        face_fn, face_workers = _encode_face, workers
+    elif style == MATTE_STYLE:
+        face_fn, face_workers = matte.render_segment, 1
+    else:
+        face_fn, face_workers = _encode_studio, workers
+    encode.parallel(face_fn, face_jobs, workers=face_workers, label="face segment")
     encode.parallel(_encode_share, share_jobs, workers=workers, label="share segment")
 
     # Concat the silent video parts, then mux the source audio back in.

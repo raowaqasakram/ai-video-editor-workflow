@@ -126,23 +126,35 @@ def make_lower_third(name, title, out):
 #
 # The original 1600 put the caption bar's bottom edge only ~212px up — i.e.
 # entirely inside the band the app writes over, so captions could be partly
-# covered in-feed on a phone. 1330 puts a two-line bar at 1212..1438, so even the
-# tallest caption clears the full 480px zone, while still sitting over the
-# speaker's chest and never over the face.
+# covered in-feed on a phone.
+#
+# 1400 is the shipped value, chosen after looking at a real render: 1330 cleared
+# TikTok's strictest published zone (480px) but sat visibly high on the speaker's
+# chest. 1400 puts a two-line bar at 1282..1508, i.e. 412px of clearance:
+#
+#     organic username/description band  ~320px   -> clear by ~90px  ✅
+#     TikTok's strictest ad-safe zone    ~480px   -> inside by ~70px  ⚠️
+#
+# That is the deliberate trade-off. The 480px figure reserves room for a CTA
+# button that organic posts do not have, so 412px is safe for normal posts on
+# TikTok, Reels, Shorts and Facebook Reels. If a clip is ever used as a paid ad,
+# set "caption_y": 1330 for that one.
 #
 # The value is driven by the two-line case (the maximum make_caption renders):
-#     bar_bottom = center + line_h + 24  ->  center <= H - 480 - 108
+#     bar_bottom = center + line_h + 24
 #
-# Anything raised here must also clear the screen-share camera well (see
+# Anything moved here must also clear the screen-share camera well (see
 # screenshare_vertical.FACE_Y/FACE_H) — the two constants are coupled, and
 # tests/test_pipeline_quality.py asserts both bounds.
-CAPTION_CENTER_Y = 1330
+CAPTION_CENTER_Y = 1400
 
 # The pre-2026-07-26 position, kept only to document what changed. Do not ship it.
 CAPTION_CENTER_Y_LEGACY = 1600
 
-# Bottom band reserved for platform UI; nothing rendered should intrude on it.
-PLATFORM_UI_RESERVED_PX = 480
+# Bottom band the platform UI can occupy. The organic figure is what we hold to;
+# ORGANIC is the assertion in tests, AD_SAFE is documented for paid use.
+PLATFORM_UI_RESERVED_PX = 320
+PLATFORM_UI_AD_SAFE_PX = 480
 
 
 def make_caption(text, highlights, out, center_y=None):
