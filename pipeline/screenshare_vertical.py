@@ -11,10 +11,22 @@ Pipeline:
   1. detect_share_segments()  -> time ranges where the screen is shared
      (StreamYard paints a cyan/green gradient background in screen-share mode;
       we detect it by the top-left corner going strongly blue-over-red).
-  2. render()                 -> encode each segment with the right framing and
-     concatenate, then mux the loudnorm'd original audio back in.
+  2. render()                 -> encode each segment with the right framing
+     (segments run in parallel), concatenate, then mux the original audio.
 
 Text/branding is baked with Pillow (this ffmpeg has no drawtext/libass).
+
+Two things moved out of this module:
+
+* **Audio is no longer normalised here.** It is copied through untouched and
+  mastered once at the end (`pipeline/audio_master.py`), so the reel carries a
+  single AAC generation instead of three. A body built here is therefore *not*
+  loudness-normalised on its own — that is deliberate, and the reel builder
+  handles it.
+* **Colour correction is measured, not hardcoded** (`pipeline/grade.py`). The
+  measured correction is applied to camera footage only; the shared screen is
+  never graded, because nudging contrast on someone's code or slides makes it
+  harder to read, not easier.
 """
 import os
 import sys
@@ -24,6 +36,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import encode  # noqa: E402  (canonical profiles + ffmpeg plumbing)
+import grade  # noqa: E402   (measured auto colour correction)
 import overlays as ro  # noqa: E402  (font loader + brand constants)
 
 # ---------------------------------------------------------------------------
@@ -57,13 +71,22 @@ RADIUS = 18
 # Face-only framing (blurred-fit, from config/settings.yaml -> social.framing)
 FACE_FG_CROP = "555:588:362:0"
 FACE_BG = "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
-FACE_ENH = "eq=brightness=0.02:contrast=1.05:saturation=1.04,unsharp=5:5:0.4"
-LOUDNORM = "loudnorm=I=-16:TP=-1.5:LRA=11"
+# Cheap stand-in for the shipping blur, used by the draft/preview rungs only.
+# Blurring a 135x240 thumbnail and scaling it back up costs a fraction of a
+# full-resolution boxblur, and the background is out of focus either way — but it
+# is NOT pixel-identical, so `final` never uses it.
+FACE_BG_CHEAP = ("scale=-1:240,crop=135:240,boxblur=4:1,scale=1080:1920,"
+                 "eq=brightness=-0.16:saturation=1.1")
+FACE_SHARPEN = "unsharp=5:5:0.4"    # the colour half of the old FACE_ENH is now measured
 
-# x264 settings for the big 1080x1920 encodes. `fast` is visually indistinguishable
-# from `medium` at crf 19 for this content but ~3-4x quicker.
-CRF = "19"
-PRESET = "fast"
+# Colour is measured through the shipping crop, so the analysis sees the same
+# pixels the viewer will (not the StreamYard banner we crop away).
+GRADE_PRE_FILTER = "crop=" + FACE_FG_CROP
+GRADE_SAMPLE_SECONDS = 20.0         # enough to characterise the lighting, cheap to read
+
+# How many segment encodes run at once. x264 already threads internally, so this
+# buys per-process ramp-up on multi-share clips rather than linear scaling.
+WORKERS = 3
 
 NAME = "Rao Waqas Akram"
 TITLE = "Sr. Software Engineer | Mentor"
@@ -174,21 +197,41 @@ def _brand_bg(path):
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
-def _encode_face(video, start, dur, out):
+def _out_scale(p):
+    """Trailing scale filter when the profile canvas differs from the layout canvas.
+
+    Every Pillow layer and every layout constant in this module is authored at
+    1080x1920, so a profile on a different canvas composes at the layout size and
+    rescales as the very last step. No current vertical rung needs this (the
+    quality ladder keeps one canvas on purpose) — it is the hook a horizontal or
+    square profile renders through. See RUNBOOK "Horizontal output (planned)".
+    """
+    return "" if (p["w"], p["h"]) == (W, H) else ",scale=%d:%d" % (p["w"], p["h"])
+
+
+def _encode_face(video, start, dur, out, p, grade_vf):
+    """Blurred-fit framing: sharp centre crop over a blurred, darkened fill."""
+    enhance = ",".join(f for f in (grade_vf, FACE_SHARPEN) if f)
+    background = FACE_BG_CHEAP if p["cheap_filters"] else FACE_BG
     vf = (f"[0:v]split[bg0][fg0];"
-          f"[bg0]{FACE_BG}[bg];"
-          f"[fg0]crop={FACE_FG_CROP},scale=1080:-1,{FACE_ENH}[fg];"
-          f"[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p[o]")
-    subprocess.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
-                    "-filter_complex", vf, "-map", "[o]", "-r", "30", "-t", f"{dur}",
-                    "-c:v", "libx264", "-crf", CRF, "-preset", PRESET,
-                    "-pix_fmt", "yuv420p", "-an", out, "-loglevel", "error"], check=True)
+          f"[bg0]{background}[bg];"
+          f"[fg0]crop={FACE_FG_CROP},scale={W}:-1,{enhance}[fg];"
+          f"[bg][fg]overlay=(W-w)/2:(H-h)/2{_out_scale(p)},format=yuv420p[o]")
+    encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
+                "-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
+               + encode.video_args(p) + ["-loglevel", "error", out])
+    return out
 
 
-def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out):
+def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out, p, grade_vf):
+    """Stacked framing: whole shared screen on top, camera PIP below.
+
+    The measured grade is applied to the camera PIP only — the shared screen is
+    left exactly as captured so code and slides stay legible.
+    """
     sw, sh, sx, sy = SHARE_CROP
     fw, fh, fx, fy = FACE_PIP_CROP
-    # Stacked: shared screen (top) + speaker camera PIP (bottom), both rounded.
+    pip_enhance = ",".join(f for f in (grade_vf, "unsharp=5:5:0.6") if f)
     # setpts reset is essential: the seeked video carries a large PTS while the
     # looped PNGs sit at PTS 0, so overlay would never sync them otherwise.
     # The masks are `-loop 1` (infinite) so the OUTPUT `-t {dur}` is what stops it.
@@ -197,40 +240,79 @@ def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out):
         f"[sv]crop={sw}:{sh}:{sx}:{sy},scale={SCREEN_W}:{SCREEN_H},setsar=1,"
         f"setpts=PTS-STARTPTS,format=rgba[s];[2:v]format=gray[smk];[s][smk]alphamerge[sa];"
         f"[fv]crop={fw}:{fh}:{fx}:{fy},scale={FACE_W}:{FACE_H},setsar=1,"
-        f"unsharp=5:5:0.6,setpts=PTS-STARTPTS,format=rgba[f];[3:v]format=gray[fmk];[f][fmk]alphamerge[fa];"
+        f"{pip_enhance},setpts=PTS-STARTPTS,format=rgba[f];[3:v]format=gray[fmk];[f][fmk]alphamerge[fa];"
         f"[1:v][sa]overlay={SCREEN_X}:{SCREEN_Y}[t1];"
-        f"[t1][fa]overlay={FACE_X}:{FACE_Y},format=yuv420p[o]")
-    subprocess.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
-                    "-loop", "1", "-i", bg_png, "-loop", "1", "-i", smask_png,
-                    "-loop", "1", "-i", fmask_png,
-                    "-filter_complex", vf, "-map", "[o]", "-r", "30", "-t", f"{dur}",
-                    "-c:v", "libx264", "-crf", CRF, "-preset", PRESET,
-                    "-pix_fmt", "yuv420p", "-an", out, "-loglevel", "error"], check=True)
+        f"[t1][fa]overlay={FACE_X}:{FACE_Y}{_out_scale(p)},format=yuv420p[o]")
+    encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
+                "-loop", "1", "-i", bg_png, "-loop", "1", "-i", smask_png,
+                "-loop", "1", "-i", fmask_png,
+                "-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
+               + encode.video_args(p) + ["-loglevel", "error", out])
+    return out
 
 
-def render(video, out, shares=None, workdir=None):
-    """Build the screen-share-aware vertical for `video` -> `out`."""
-    workdir = workdir or os.path.join(os.path.dirname(os.path.abspath(out)), "_ssv_work")
-    os.makedirs(workdir, exist_ok=True)
-    dur_total = float(subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", video],
-        capture_output=True, text=True).stdout.strip())
-
-    if shares is None:
-        shares = detect_share_segments(video)
-    shares = sorted(shares)
-    print("screen-share segments:", shares)
-
-    # build a full timeline of (start, end, kind) covering [0, dur_total]
+def _build_timeline(shares, dur_total):
+    """Cover [0, dur_total] with contiguous (start, end, kind) spans."""
     timeline, cur = [], 0.0
-    for s, e in shares:
+    for s, e in sorted(shares):
         if s > cur:
             timeline.append((cur, s, "face"))
         timeline.append((max(s, cur), e, "share"))
         cur = e
     if cur < dur_total:
         timeline.append((cur, dur_total, "face"))
+    return timeline
+
+
+def _measure_grade(video, timeline, workdir, enabled):
+    """Measure the colour correction once, on camera footage, for the whole body.
+
+    Measuring per segment would make the grade drift visibly across cuts, so we
+    characterise the recording once and apply the same correction everywhere.
+    Prefers a face span (full-frame camera); falls back to the camera PIP crop
+    when the clip is share-only.
+    """
+    if not enabled:
+        return ""
+    face = next((sp for sp in timeline if sp[2] == "face"), None)
+    if face is not None:
+        start, end = face[0], face[1]
+        pre = GRADE_PRE_FILTER
+    else:
+        start, end = timeline[0][0], timeline[0][1]
+        fw, fh, fx, fy = FACE_PIP_CROP
+        pre = "crop=%d:%d:%d:%d" % (fw, fh, fx, fy)
+    window = min(GRADE_SAMPLE_SECONDS, max(1.0, end - start))
+    return grade.auto_filter(video, start=start, dur=window, pre_filter=pre,
+                             cache_dir=workdir)
+
+
+def render(video, out, shares=None, workdir=None, quality="final",
+           orientation="vertical", auto_grade=True, workers=WORKERS):
+    """Build the screen-share-aware vertical for `video` -> `out`.
+
+    Args:
+        video: source clip (already trimmed to one answer).
+        out: destination body mp4.
+        shares: explicit [(start, end), ...] share ranges, or None to auto-detect.
+        quality: "final" | "preview" | "draft" (see pipeline/encode.py).
+        orientation: delivery canvas; only "vertical" is wired up for now.
+        auto_grade: measure and apply the bounded colour correction.
+        workers: parallel segment encodes.
+
+    The audio is muxed through **unprocessed** — mastering happens once, later.
+    """
+    workdir = workdir or os.path.join(os.path.dirname(os.path.abspath(out)), "_ssv_work")
+    os.makedirs(workdir, exist_ok=True)
+    p = encode.profile(quality, orientation)
+    dur_total = encode.duration(video)
+
+    if shares is None:
+        shares = detect_share_segments(video)
+    print("screen-share segments:", sorted(shares))
+
+    timeline = _build_timeline(shares, dur_total)
+    grade_vf = _measure_grade(video, timeline, workdir, auto_grade)
 
     bg_png = os.path.join(workdir, "share_bg.png")
     smask_png = os.path.join(workdir, "screen_mask.png")
@@ -239,30 +321,45 @@ def render(video, out, shares=None, workdir=None):
     _rounded_mask(smask_png, SCREEN_W, SCREEN_H)
     _rounded_mask(fmask_png, FACE_W, FACE_H)
 
-    parts = []
+    # Queue every segment, then encode them concurrently.
+    jobs, parts = [], []
     for i, (s, e, kind) in enumerate(timeline):
         seg = os.path.join(workdir, f"seg_{i:02d}.mp4")
         dur = round(e - s, 3)
         print(f"  [{kind}] {s:.2f}-{e:.2f}s ({dur:.2f}s) -> {os.path.basename(seg)}")
         if kind == "face":
-            _encode_face(video, s, dur, seg)
+            jobs.append((video, s, dur, seg, p, grade_vf))
         else:
-            _encode_share(video, s, dur, bg_png, smask_png, fmask_png, seg)
+            jobs.append((video, s, dur, bg_png, smask_png, fmask_png, seg, p, grade_vf))
         parts.append(seg)
 
-    # concat (video) then mux loudnorm'd original audio
+    face_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "face"]
+    share_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "share"]
+    print(f"  encoding {len(parts)} segment(s), {min(workers, len(parts))} at a time"
+          f" [{p['quality']} {p['w']}x{p['h']} crf{p['crf']}]")
+    encode.parallel(_encode_face, face_jobs, workers=workers, label="face segment")
+    encode.parallel(_encode_share, share_jobs, workers=workers, label="share segment")
+
+    # Concat the silent video parts, then mux the source audio back in.
     listf = os.path.join(workdir, "concat.txt")
     with open(listf, "w") as fh:
-        for p in parts:
-            fh.write(f"file '{p}'\n")
+        for part in parts:
+            fh.write("file '%s'\n" % os.path.abspath(part))
     concat = os.path.join(workdir, "concat.mp4")
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf,
-                    "-c", "copy", concat, "-loglevel", "error"], check=True)
-    subprocess.run(["ffmpeg", "-y", "-i", concat, "-i", video,
-                    "-map", "0:v", "-map", "1:a", "-af", LOUDNORM,
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                    "-movflags", "+faststart", "-shortest", out, "-loglevel", "error"], check=True)
+    encode.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf,
+                "-c", "copy", "-loglevel", "error", concat])
+
+    # Copy the audio when the source is already canonical (StreamYard is), so it
+    # reaches the final mastering pass without a single intermediate re-encode.
+    passthrough = encode.audio_passthrough_ok(video)
+    audio = ["-c:a", "copy"] if passthrough else encode.audio_args()
+    print("  audio: %s" % ("copied from source (0 generations)" if passthrough
+                           else "re-encoded to canonical AAC (source differs)"))
+    encode.run(["ffmpeg", "-y", "-i", concat, "-i", video,
+                "-map", "0:v", "-map", "1:a", "-c:v", "copy"] + audio
+               + ["-movflags", "+faststart", "-shortest", "-loglevel", "error", out])
     print("screen-share-aware vertical ->", out)
+    return out
 
 
 if __name__ == "__main__":

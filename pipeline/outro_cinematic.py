@@ -38,9 +38,11 @@ MONO = "/System/Library/Fonts/Menlo.ttc"
 ARIAL_BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FRAMES = os.environ.get("OUTRO_FRAMES",
-                        "/private/tmp/claude-502/-Users-elon-Youtube-Automation-weekly-live/"
-                        "d0c7d583-5313-48b8-9ae9-7e0bfa01dc38/scratchpad/outro_frames")
+# Frame scratch dir. The default used to be a one-off session temp path that no
+# longer exists, so re-rendering the outro on a clean machine would have written
+# frames nowhere useful; it now lands in the pipeline's own (gitignored) cache.
+# Override with OUTRO_FRAMES.
+FRAMES = os.environ.get("OUTRO_FRAMES", os.path.join(HERE, "_cache", "outro_frames"))
 OUT = os.path.join(HERE, "outro_cinematic.mp4")
 
 

@@ -327,6 +327,16 @@ READY_TO_UPLOAD/
 
 # CLI Commands
 
+> The commands in this section belong to the planned `app/` entry point. The
+> **working** per-question workflow is the `pipeline/` one — see
+> [RUNBOOK.md](./RUNBOOK.md):
+>
+> ```bash
+> python3 pipeline/trim.py <stream>.mp4 <clip>.mp4 --start 18:03 --end 19:27
+> python3 pipeline/transcribe.py <clip>.mp4 <Q_dir> large-v3 ur
+> python3 pipeline/process_question.py <clip>.mp4 <Q_dir>          # add --draft to iterate
+> ```
+
 ## Process Everything
 
 ```bash

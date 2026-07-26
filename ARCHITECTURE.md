@@ -6,6 +6,13 @@
 
 Version: 1.0
 
+> **Scope note.** This document is the target architecture for the config-driven
+> `modules/` build-out. The pipeline that actually ships videos today lives in
+> `pipeline/`, and **[RUNBOOK.md](./RUNBOOK.md) is the source of truth** for it —
+> including the encode path (picture encoded twice, audio once), the shared encode
+> profile in `pipeline/encode.py`, measured colour correction, audio mastering at
+> -14 LUFS, and the automated QC pass. Where the two disagree, the RUNBOOK wins.
+
 ---
 
 # 1. System Overview

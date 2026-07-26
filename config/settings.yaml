@@ -10,6 +10,10 @@ video:
   # Visually-lossless quality used for all re-encodes.
   crf: 19
   preset: "medium"
+  # NOTE: pipeline/encode.py is the authority for the runtime encode profile —
+  # every part of a reel must share one profile for the final copy-join to work,
+  # so those values live in code (encode.LADDER / encode.ORIENTATIONS) rather than
+  # here. Trim quality is CRF 16 (pipeline/trim.py); the reel body is CRF 19.
 
 social:
   vertical_resolution:
@@ -23,7 +27,12 @@ social:
     # foreground crop from 1280x720 source (removes the StreamYard bottom banner):
     foreground_crop: "555:588:362:0"   # w:h:x:y  -> scaled to 1080 wide (~1080x1144)
     background: "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
-    enhance: "eq=brightness=0.02:contrast=1.05:saturation=1.04,unsharp=5:5:0.4"
+    # Sharpening is fixed; the colour half of the old `enhance` value is now
+    # MEASURED per clip by pipeline/grade.py instead of hardcoded, because room
+    # lighting and camera exposure drift week to week. Bounded to +/-8%, corrective
+    # only (no hue shift). Disable per question with `"auto_grade": false`.
+    enhance_sharpen: "unsharp=5:5:0.4"
+    enhance_colour: "measured — see pipeline/grade.py"
   # Screen-share segments are framed DIFFERENTLY (see pipeline/screenshare_vertical.py).
   # When the presenter shares their screen, StreamYard uses a FIXED layout: shared
   # screen in a constant rectangle on the right, camera PIP on the left. In the
@@ -45,7 +54,13 @@ social:
     screen_top: 655
     corner_radius: 18
     show_face: false                   # never show the camera during a screen share
-  audio_loudnorm: "loudnorm=I=-16:TP=-1.5:LRA=11"
+  # Audio is mastered ONCE, at the very end of assembly, by pipeline/audio_master.py
+  # (two-pass loudnorm with linear=true). -14 LUFS is what YouTube / TikTok /
+  # Instagram / LinkedIn normalise to; the old -16 target shipped quieter than
+  # everything around it in the feed. Two-pass matters as much as the target: a
+  # single-pass loudnorm rides the gain and the loudness wanders across the clip.
+  audio_loudnorm: "loudnorm=I=-14:TP=-1.0:LRA=11"
+  audio_denoise: "afftdn=nf=-25"   # OPT-IN only (`"denoise": true`); dulls clean speech
 
 # StreamYard question overlay detection (see pipeline/detect_questions_streamyard.py)
 ocr:

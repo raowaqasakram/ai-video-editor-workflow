@@ -7,24 +7,42 @@ Per-video inputs are small files/args, not model work:
   - body mp4 (screen-share-aware vertical from pipeline/screenshare_vertical.py)
   - question text + asker handle          (for the card)
   - captions.json  [[start, end, "text", ["highlight", ...]], ...]  in BODY time
+  - tech chips     [[start, end, "LABEL", "icon"], ...] or "auto"
   - outro mp4      (defaults to the cinematic brand outro)
 
 Text is baked with Pillow (this ffmpeg has no drawtext/libass); the caption layer
 is a qtrle alpha video built from a concat timeline (proven freeze-safe pattern).
+
+Encode path (this is the part that decides output quality)
+---------------------------------------------------------
+    body segments   [encode 1, in screenshare_vertical]
+        -> overlay composite   [encode 2, here — captions/chips/name tag]
+        -> join with card + outro   [COPY, no encode]
+        -> audio master             [audio only, video copied]
+
+So the picture is encoded twice and the audio exactly once. The old path put the
+picture through three generations and the audio through three, because the final
+join used the concat *filter*. Everything downstream of the composite is now a
+stream copy, which is both cleaner and much faster.
+
+For that to hold, every part must share one encode profile — see
+pipeline/encode.py, which owns those values.
 """
 import json
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import audio_master  # noqa: E402
+import encode  # noqa: E402
 import overlays as ro  # noqa: E402
+import tech_overlays as tov  # noqa: E402
 from PIL import Image  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(HERE, "_cache")     # normalised outros, shared by all questions
 CARD_DUR = 3.6
 NAME_TAG_SECONDS = 5
-CRF, PRESET = "19", "fast"
 
 # keywords auto-highlighted in captions when a caption doesn't specify its own
 KEYWORDS = {"java", "spring", "boot", "docker", "kubernetes", "ai", "ml", "aws",
@@ -34,14 +52,9 @@ KEYWORDS = {"java", "spring", "boot", "docker", "kubernetes", "ai", "ml", "aws",
             "business", "services", "products", "logic", "debug", "documentation"}
 
 
-def run(c):
-    subprocess.run(c, check=True)
-
-
 def dur(p):
-    return float(subprocess.check_output(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=nw=1:nk=1", p]).decode())
+    """Kept as a module-level name because callers (and metadata) use it."""
+    return encode.duration(p)
 
 
 def _auto_hl(text):
@@ -49,35 +62,7 @@ def _auto_hl(text):
             if w.strip(".,!?/()").lower() in KEYWORDS]
 
 
-def _still(png, d, out):
-    """A PNG -> d-second 1080x1920 30fps clip with a silent stereo track."""
-    run(["ffmpeg", "-y", "-loop", "1", "-t", f"{d}", "-i", png,
-         "-f", "lavfi", "-t", f"{d}", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-         "-vf", "scale=1080:1920,format=yuv420p", "-r", "30",
-         "-c:v", "libx264", "-crf", CRF, "-preset", PRESET,
-         "-c:a", "aac", "-b:a", "192k", "-shortest", out, "-loglevel", "error"])
-
-
-def _normalize(inp, out):
-    """Re-encode any clip to the reel's canonical params (1080x1920, 30fps, aac).
-    Adds a silent track if the source has none, so concat always has audio."""
-    has_audio = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
-         "stream=index", "-of", "csv=p=0", inp],
-        capture_output=True, text=True).stdout.strip() != ""
-    cmd = ["ffmpeg", "-y", "-i", inp]
-    if not has_audio:
-        cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-    cmd += ["-vf", "scale=1080:1920,format=yuv420p", "-r", "30",
-            "-c:v", "libx264", "-crf", CRF, "-preset", PRESET,
-            "-c:a", "aac", "-b:a", "192k"]
-    if not has_audio:
-        cmd += ["-map", "0:v", "-map", "1:a", "-shortest"]
-    cmd += [out, "-loglevel", "error"]
-    run(cmd)
-
-
-def _caption_layer(caps, body_dur, work, transparent):
+def _caption_layer(caps, body_dur, work, transparent, p, caption_safe=False):
     """Render caption PNGs and assemble a qtrle alpha layer over [0, body_dur]."""
     cap_dir = os.path.join(work, "caps")
     os.makedirs(cap_dir, exist_ok=True)
@@ -86,7 +71,7 @@ def _caption_layer(caps, body_dur, work, transparent):
         s, e, text = cap[0], cap[1], cap[2]
         hl = cap[3] if len(cap) > 3 and cap[3] else _auto_hl(text)
         png = os.path.join(cap_dir, f"cap_{i:03d}.png")
-        ro.make_caption(text, hl, png)
+        ro.make_caption(text, hl, png, safe_zone=caption_safe)
         items.append((round(float(s), 2), round(float(e), 2), png))
 
     lines, t = [], 0.0
@@ -110,17 +95,93 @@ def _caption_layer(caps, body_dur, work, transparent):
     listf = os.path.join(work, "caps_concat.txt")
     open(listf, "w").write("\n".join(lines))
     layer = os.path.join(work, "caption_layer.mov")
-    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf, "-r", "30",
-         "-vf", "scale=1080:1920,format=rgba", "-c:v", "qtrle", layer, "-loglevel", "error"])
+    encode.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf,
+                "-r", str(p["fps"]),
+                "-vf", "%s,format=rgba" % encode.scale_filter(p),
+                "-c:v", "qtrle", "-loglevel", "error", layer])
     return layer
 
 
+def _composite_body(body, work, caps, tech_layer, lt_png, bdur, p,
+                    transparent, caption_safe):
+    """Overlay captions + tech chips + name tag onto the body. The one re-encode.
+
+    `shortest=1` plus an explicit `-t` is not optional: ffmpeg's overlay extends
+    to its LONGEST input, so a caption layer even slightly longer than the body
+    freezes the tail with no audio (see RUNBOOK env gotchas).
+
+    Audio is copied, never re-encoded — mastering happens once at the very end.
+    """
+    out = os.path.join(work, "body_final.mp4")
+    cmd = ["ffmpeg", "-y", "-i", body]
+    chain, src, idx = [], "[0:v]", 1
+
+    if caps:
+        cmd += ["-i", _caption_layer(caps, bdur, work, transparent, p, caption_safe)]
+        chain.append(f"{src}[{idx}:v]overlay=0:0:shortest=1[vc]")
+        src, idx = "[vc]", idx + 1
+    if tech_layer:
+        cmd += ["-i", tech_layer]
+        chain.append(f"{src}[{idx}:v]overlay=0:0:shortest=1[vt]")
+        src, idx = "[vt]", idx + 1
+
+    # The name tag is a still, so a 5fps loop is plenty of input frames.
+    cmd += ["-loop", "1", "-framerate", "5", "-t", f"{bdur}", "-i", lt_png]
+    chain.append(f"{src}[{idx}:v]overlay=0:0:"
+                 f"enable='between(t,0.2,{NAME_TAG_SECONDS})'[v]")
+
+    cmd += ["-filter_complex", ";".join(chain),
+            "-map", "[v]", "-map", "0:a", "-t", f"{bdur}"]
+    cmd += encode.video_args(p) + ["-c:a", "copy"]
+    cmd += ["-loglevel", "error", out]
+    encode.run(cmd)
+    return out
+
+
+def _outro_part(outro, p):
+    """Normalise the outro to the canonical profile, cached across all questions.
+
+    The brand outro is one static file reused by every video; it used to be
+    re-encoded on every run of every question for no reason.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(outro))[0]
+    cached = os.path.join(
+        CACHE_DIR, "%s.%s-%s.mp4" % (stem, p["orientation"], p["quality"]))
+    return encode.normalize(outro, cached, p)
+
+
 def build(body, out_dir, question, asker, name, title,
-          caps=None, outro=None, out_name="REEL.mp4"):
+          caps=None, outro=None, out_name="REEL.mp4", tech=None,
+          quality="final", orientation="vertical", denoise=False,
+          caption_safe=False):
+    """Assemble the finished reel and return its path.
+
+    Args:
+        body: vertical answer body (from screenshare_vertical.render).
+        out_dir: question folder; receives the reel and the PNG artefacts.
+        question, asker: question-card content.
+        name, title: name-tag content.
+        caps: caption timeline in BODY time, or None.
+        tech: chip timeline, "auto" (derive from caps), or None.
+        outro: outro mp4, or None for the cinematic brand outro.
+        quality: "final" ships; "preview"/"draft" for fast iteration.
+        orientation: delivery canvas (see pipeline/encode.py).
+        denoise: gentle noise reduction in the audio master (off by default).
+        caption_safe: raise captions clear of the platform UI band. Off by
+            default because it changes the locked framing — see RUNBOOK.
+    """
     os.makedirs(out_dir, exist_ok=True)
     work = os.path.join(out_dir, "_reel_work")
     os.makedirs(work, exist_ok=True)
+    p = encode.profile(quality, orientation)
     outro = outro or os.path.join(HERE, "outro_cinematic.mp4")
+
+    # A cheap render must never be mistaken for — or overwrite — the shipping
+    # file, so its quality is stamped into the filename.
+    if quality != "final":
+        stem, ext = os.path.splitext(out_name)
+        out_name = "%s.%s%s" % (stem, quality, ext)
 
     transparent = os.path.join(work, "transparent.png")
     Image.new("RGBA", (ro.W, ro.H), (0, 0, 0, 0)).save(transparent)
@@ -131,52 +192,43 @@ def build(body, out_dir, question, asker, name, title,
     ro.make_lower_third(name, title, lt_png)
 
     bdur = dur(body)
+    if tech == "auto":
+        tech = tov.auto(caps) if caps else None
+    tech_layer = tov.layer(tech, bdur, work) if tech else None
 
-    # composite captions (optional) + name tag (first NAME_TAG_SECONDS) onto body.
-    # shortest=1 + explicit -t so a longer caption layer can never freeze the tail.
-    body_final = os.path.join(work, "body_final.mp4")
-    if caps:
-        layer = _caption_layer(caps, bdur, work, transparent)
-        run(["ffmpeg", "-y", "-i", body, "-i", layer,
-             "-loop", "1", "-framerate", "5", "-t", f"{bdur}", "-i", lt_png,
-             "-filter_complex",
-             "[0:v][1:v]overlay=0:0:shortest=1[v1];"
-             f"[v1][2:v]overlay=0:0:enable='between(t,0.2,{NAME_TAG_SECONDS})'[v]",
-             "-map", "[v]", "-map", "0:a", "-t", f"{bdur}",
-             "-c:v", "libx264", "-crf", CRF, "-preset", PRESET, "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "192k", body_final, "-loglevel", "error"])
-    else:
-        run(["ffmpeg", "-y", "-i", body,
-             "-loop", "1", "-framerate", "5", "-t", f"{bdur}", "-i", lt_png,
-             "-filter_complex",
-             f"[0:v][1:v]overlay=0:0:enable='between(t,0.2,{NAME_TAG_SECONDS})'[v]",
-             "-map", "[v]", "-map", "0:a", "-t", f"{bdur}",
-             "-c:v", "libx264", "-crf", CRF, "-preset", PRESET, "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "192k", body_final, "-loglevel", "error"])
+    print(f"assembling reel [{p['quality']} {p['w']}x{p['h']} crf{p['crf']}]")
+    body_final = _composite_body(body, work, caps, tech_layer, lt_png, bdur, p,
+                                 transparent, caption_safe)
 
-    card_mp4 = os.path.join(work, "card.mp4")
-    outro_mp4 = os.path.join(work, "outro.mp4")
-    _still(card_png, CARD_DUR, card_mp4)
-    _normalize(outro, outro_mp4)
+    card_mp4 = encode.still_clip(card_png, CARD_DUR, os.path.join(work, "card.mp4"), p)
+    outro_mp4 = _outro_part(outro, p)
 
+    # Join by stream copy — no re-encode of any part.
+    parts = [card_mp4, body_final, outro_mp4]
+    joined = os.path.join(work, "joined.mp4")
+    encode.join(parts, joined, p, work)
+
+    # Master the audio once, over the joined reel. Cut fades are NOT applied here
+    # — they belong at the trim, where the cut is made (see audio_master).
     final = os.path.join(out_dir, out_name)
-    run(["ffmpeg", "-y", "-i", card_mp4, "-i", body_final, "-i", outro_mp4,
-         "-filter_complex",
-         "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]",
-         "-map", "[v]", "-map", "[a]",
-         "-c:v", "libx264", "-crf", CRF, "-preset", PRESET, "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", final, "-loglevel", "error"])
-    print(f"REEL -> {final}  ({dur(final):.1f}s, {len(caps or [])} captions)")
+    audio_master.master(joined, final, denoise=denoise,
+                        two_pass=(quality != "draft"))
+
+    print(f"REEL -> {final}  ({dur(final):.1f}s, {len(caps or [])} captions,"
+          f" {len(tech or [])} chips)")
     return final
 
 
 if __name__ == "__main__":
     # Usage: build_reel.py <body.mp4> <out_dir> <meta.json>
-    # meta.json: {question, asker, name, title, captions?, outro?, out_name?}
+    # meta.json: {question, asker, name, title, captions?, tech?, outro?, out_name?}
     body, out_dir, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
     meta = json.load(open(meta_path))
     build(body, out_dir, meta["question"], meta["asker"],
           meta.get("name", "Rao Waqas Akram"),
           meta.get("title", "Sr. Software Engineer | Mentor"),
           caps=meta.get("captions"), outro=meta.get("outro"),
-          out_name=meta.get("out_name", "REEL.mp4"))
+          out_name=meta.get("out_name", "REEL.mp4"), tech=meta.get("tech"),
+          quality=meta.get("quality", "final"),
+          denoise=meta.get("denoise", False),
+          caption_safe=meta.get("caption_safe", False))

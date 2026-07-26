@@ -116,13 +116,28 @@ def make_lower_third(name, title, out):
     print("lower-third ->", out)
 
 
-def make_caption(text, highlights, out):
+# Vertical centre of the caption block.
+#
+# CAPTION_CENTER_Y is the shipped value (locked recipe: captions in the lower
+# band). CAPTION_CENTER_Y_SAFE lifts the block clear of the platform UI: TikTok,
+# Reels and Shorts paint the username / description / audio row and the right
+# action rail over roughly the bottom 420-480px of a 1080x1920 frame, and at the
+# default the bar bottom sits only ~210px up, so part of it can be covered
+# in-feed. Opt in per video with `"caption_safe": true` — check one export on a
+# phone before switching it on everywhere, since it does move the framing.
+CAPTION_CENTER_Y = 1600
+CAPTION_CENTER_Y_SAFE = 1450
+
+
+def make_caption(text, highlights, out, safe_zone=False):
     """Render a transparent lower-third caption PNG with keyword highlighting.
 
     Args:
         text: Caption text (Roman-Urdu + English).
         highlights: Iterable of lowercased keywords to colour in the accent.
         out: Output PNG path.
+        safe_zone: Lift the block to CAPTION_CENTER_Y_SAFE so the platform UI
+            cannot cover it.
     """
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -133,8 +148,8 @@ def make_caption(text, highlights, out):
     line_h = 84
     pad_x, pad_y = 46, 34
     block_h = line_h * len(lines)
-    # background bar sits in the lower band (below the fitted video, above safe area)
-    top = 1600 - block_h // 2
+    center = CAPTION_CENTER_Y_SAFE if safe_zone else CAPTION_CENTER_Y
+    top = center - block_h // 2
     widest = max(d.textlength(ln, font=cf) for ln in lines)
     bar = [(W - widest) / 2 - pad_x, top - pad_y,
            (W + widest) / 2 + pad_x, top + block_h + pad_y - 10]
