@@ -23,8 +23,10 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "outro":     null,          # null = cinematic brand outro
   "out_name":  "REEL.mp4",
   "style":        "blur",     # blur | studio_bands | studio_set | studio_real
-  "backdrop_photo": null,     # studio styles: a real room photo (filename in
-                              # assets/backdrops/, or a path). null = rendered set.
+  "backdrop_photo": null,     # studio styles: null = rendered set | "auto" (best
+                              # fit for this framing) | "rotate" (cycle per
+                              # question) | a filename | a path
+  "backdrop_dir":   null,     # where "auto"/"rotate" look. null = assets/backdrops/
   "auto_grade":   true,       # measured colour correction (pipeline/grade.py)
   "denoise":      false,      # gentle noise reduction — only for rough audio
   "caption_y":    null        # null = the safe default (overlays.CAPTION_CENTER_Y)
@@ -46,6 +48,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backdrop  # noqa: E402
 import build_reel as br  # noqa: E402
 import encode  # noqa: E402
 import screenshare_vertical as ssv  # noqa: E402
@@ -70,6 +73,7 @@ TEMPLATE = {
     # render options (safe defaults — see the module docstring):
     "style": "blur",
     "backdrop_photo": None,
+    "backdrop_dir": None,
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
@@ -141,21 +145,46 @@ BACKDROP_DIR = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "assets", "backdrops")
 
 
-def _backdrop_photo(cfg):
+def _backdrop_photo(cfg, out_dir=None):
     """Resolve the optional `backdrop_photo` config value to a real path.
 
-    Accepts a bare filename (looked up in assets/backdrops/) or an explicit path.
-    Missing files warn and fall back to the rendered plate rather than failing the
-    whole render — a wrong filename should not cost a full re-encode.
+    Accepted values:
+        null              use the rendered set (pipeline/backdrop.py)
+        "auto"            pick the photo that best suits this framing
+        "rotate"          cycle photos by question number, so a batch of videos
+                          is not all shot in the same room
+        "<filename>"      a specific photo in the backdrop directory
+        "<path>"          a specific photo anywhere
+
+    A directory can be overridden per question with `backdrop_dir`, which is how
+    a folder outside the repo (unlicensed or just large) stays out of git.
+
+    Anything unresolvable warns and falls back to the rendered plate rather than
+    failing: a typo in a filename should not cost a full re-encode.
     """
     name = cfg.get("backdrop_photo")
     if not name:
         return None
-    for cand in (name, os.path.join(BACKDROP_DIR, name)):
+    directory = os.path.expanduser(cfg.get("backdrop_dir") or BACKDROP_DIR)
+
+    if name in ("auto", "rotate"):
+        rotate = None
+        if name == "rotate":
+            # Question number off the folder name (Q20 -> 20); anything unparseable
+            # rotates from 0, which is still stable for that folder.
+            digits = "".join(c for c in os.path.basename(out_dir or "") if c.isdigit())
+            rotate = int(digits) if digits else 0
+        chosen = backdrop.pick_photo(directory, rotate=rotate)
+        if not chosen:
+            print("WARNING: no backdrop photos in %s — using the rendered plate."
+                  % directory)
+        return chosen
+
+    for cand in (os.path.expanduser(name), os.path.join(directory, name)):
         if os.path.exists(cand):
             return os.path.abspath(cand)
     print("WARNING: backdrop_photo %r not found (looked in %s) — "
-          "using the rendered plate." % (name, BACKDROP_DIR))
+          "using the rendered plate." % (name, directory))
     return None
 
 
@@ -178,7 +207,7 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
     suffix = "" if quality == "final" else f".{quality}"
     suffix += "" if style == "blur" else f".{style}"
     # The backdrop photo is part of the look, so it is part of the cache key too.
-    photo = _backdrop_photo(cfg)
+    photo = _backdrop_photo(cfg, out_dir)
     if photo:
         suffix += "." + os.path.splitext(os.path.basename(photo))[0]
     body = os.path.join(out_dir, f"_body{suffix}.mp4")

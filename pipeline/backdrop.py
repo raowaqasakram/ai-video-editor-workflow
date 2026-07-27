@@ -307,6 +307,88 @@ def _photo_room(photo_path):
     return Image.fromarray(arr.clip(0, 255).astype(np.uint8))
 
 
+# Where the backdrop is actually VISIBLE once the speaker is composited over it.
+#
+# He is scaled to overflow the canvas (matte.FG_*), so he covers the whole middle.
+# What the viewer sees of the room is a ring: the band above his head, thin strips
+# down each side, and the bottom (mostly under the caption bar). Judging a photo by
+# its overall average is therefore misleading — the middle of the image is the part
+# that gets hidden. These bounds are what the scoring below looks at.
+VISIBLE_TOP = 520               # band above the head
+VISIBLE_BOTTOM = 1560           # below the shoulders
+VISIBLE_SIDE = 130              # strips either side, over the middle rows
+
+# What a good backdrop looks like behind a lit face. Both are means over the ring.
+#
+# Luminance: dark enough that his face is the brightest thing in frame, but not so
+# dark that the room disappears and we are back to a black void.
+# Detail: some structure so it reads as a room, but not so much that it competes
+# with him. Measured as the standard deviation, i.e. local contrast.
+TARGET_LUMA = 46.0
+TARGET_DETAIL = 26.0
+
+
+def _visible_ring(arr):
+    """The pixels of a plate the viewer will actually see. See VISIBLE_* above."""
+    mid = arr[VISIBLE_TOP:VISIBLE_BOTTOM]
+    return np.concatenate([
+        arr[:VISIBLE_TOP].ravel(),
+        arr[VISIBLE_BOTTOM:].ravel(),
+        mid[:, :VISIBLE_SIDE].ravel(),
+        mid[:, -VISIBLE_SIDE:].ravel(),
+    ])
+
+
+def score_photo(photo_path):
+    """Rate how well a room photo suits the speaker's framing. Lower is better.
+
+    Scores the *processed plate*, not the raw photo, because the defocus and the
+    exposure pull change both numbers substantially — a bright photo that grades
+    down nicely should not be rejected for being bright.
+    """
+    arr = np.asarray(_photo_room(photo_path).convert("L")).astype(np.float32)
+    ring = _visible_ring(arr)
+    # Normalised so the two terms are comparable, then summed. Detail is weighted
+    # lower: getting the brightness wrong is far more visible than getting the
+    # amount of background texture wrong.
+    return (abs(ring.mean() - TARGET_LUMA) / TARGET_LUMA
+            + 0.5 * abs(ring.std() - TARGET_DETAIL) / TARGET_DETAIL)
+
+
+def photo_candidates(directory):
+    """Every usable room photo in `directory`, sorted by name for determinism."""
+    exts = (".jpg", ".jpeg", ".png", ".webp")
+    if not os.path.isdir(directory):
+        return []
+    return sorted(os.path.join(directory, f) for f in os.listdir(directory)
+                  if f.lower().endswith(exts))
+
+
+def pick_photo(directory, rotate=None, verbose=True):
+    """Choose a room photo from `directory`.
+
+    Two modes, because both are reasonable and they answer different needs:
+
+    * `rotate=None` (auto) — pick whichever photo best suits the framing, by
+      score_photo(). Deterministic: the same footage always gets the same room.
+    * `rotate=<int>` — cycle through the photos by index, so a batch of questions
+      does not ship as a dozen videos shot in the identical room.
+
+    Returns None if the directory holds no photos, which callers treat as "fall
+    back to the rendered set" rather than an error.
+    """
+    photos = photo_candidates(directory)
+    if not photos:
+        return None
+    if rotate is not None:
+        chosen = photos[rotate % len(photos)]
+    else:
+        chosen = min(photos, key=score_photo)
+    if verbose:
+        print("  backdrop photo -> %s" % os.path.basename(chosen))
+    return chosen
+
+
 def plate(style, out_path, hairline=True, photo=None):
     """Render the backdrop plate for `style` to `out_path`. Cached by mtime.
 
