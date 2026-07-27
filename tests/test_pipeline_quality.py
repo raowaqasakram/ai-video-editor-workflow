@@ -35,12 +35,8 @@ import verify_reel  # noqa: E402
 # can be nudged in isolation.
 
 def _caption_bar(lines, center=None):
-    """(top, bottom) of the rendered caption bar, mirroring make_caption's maths."""
-    center = overlays.CAPTION_CENTER_Y if center is None else center
-    line_h, pad_y = 84, 34
-    block_h = line_h * lines
-    top = center - block_h // 2
-    return top - pad_y, top + block_h + pad_y - 10
+    """(top, bottom) of the rendered caption bar."""
+    return overlays.caption_bar_y(lines, center)
 
 
 @pytest.mark.parametrize("lines", [1, 2])
@@ -66,6 +62,28 @@ def test_screen_share_wells_clear_the_name_tag():
     name_tag_bottom = 248            # _brand_bg draws it at y=110, height 138
     assert ssv.SCREEN_Y > name_tag_bottom
     assert ssv.FACE_Y > ssv.SCREEN_Y + ssv.SCREEN_H
+
+
+def test_footage_band_stops_where_the_caption_starts():
+    """The whole point of lifting the band: the caption must sit on blurred fill,
+    never across the speaker's chest."""
+    top, _ = _caption_bar(2)
+    assert ssv.FACE_SEAM_Y == top, (
+        "the seam is at %d but the caption bar starts at %d" % (ssv.FACE_SEAM_Y, top))
+
+
+def test_lifting_the_band_leaves_a_top_margin_but_not_a_wide_one():
+    """The band must still fit on the canvas (a negative offset crops the speaker's
+    head), while the grey band it leaves stays far below the old centred 387px."""
+    offset = ssv.FACE_SEAM_Y - ssv.FACE_FG_H
+    assert offset >= 0, "footage band would overflow the top of the canvas"
+    assert offset < 200, "top blur band is back to being wide (was 387 centred)"
+
+
+def test_the_band_is_not_centred_anymore():
+    """Guards the fix itself: centring is what put the caption on his chest."""
+    centred = (overlays.H - ssv.FACE_FG_H) // 2
+    assert ssv.FACE_SEAM_Y - ssv.FACE_FG_H != centred
 
 
 def test_legacy_caption_position_would_fail_the_safe_zone():

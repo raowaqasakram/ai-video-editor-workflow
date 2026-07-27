@@ -81,6 +81,20 @@ RADIUS = 18
 
 # Face-only framing (blurred-fit, from config/settings.yaml -> social.framing)
 FACE_FG_CROP = "555:588:362:0"
+
+# The sharp footage band is NOT centred vertically. Centred, it ran 387..1533,
+# which left a wide grey blur band across the top and — worse — put the caption
+# bar across the speaker's chest, where it competes with him instead of reading
+# cleanly. The band is lifted so its BOTTOM edge meets the TOP of the tallest
+# (two-line) caption bar: caption on clean blur, top band down to ~136px.
+#
+# Expressed as `<seam>-h` in the overlay so ffmpeg does the arithmetic with the
+# band's real height at runtime. That matters because the height is not obvious:
+# crop 555 is ODD, yuv420p forces an even crop to 554, and scale=1080:-1 then
+# yields 1146 — a Python-side guess would misplace the seam by a pixel or two on
+# any future crop change. FACE_FG_H records the measured value for the tests.
+FACE_SEAM_Y = ro.caption_bar_y(2)[0]     # 1282
+FACE_FG_H = 1146                         # measured output of crop+scale above
 FACE_BG = "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
 # Cheap stand-in for the shipping blur, used by the draft/preview rungs only.
 # Blurring a 135x240 thumbnail and scaling it back up costs a fraction of a
@@ -228,13 +242,17 @@ def _out_scale(p):
 
 
 def _encode_face(video, start, dur, out, p, grade_vf):
-    """Blurred-fit framing: sharp centre crop over a blurred, darkened fill."""
+    """Blurred-fit framing: sharp crop over a blurred, darkened fill.
+
+    Horizontally centred, vertically lifted so the band's bottom edge meets the
+    caption bar (FACE_SEAM_Y) rather than sitting in the middle of the canvas.
+    """
     enhance = ",".join(f for f in (grade_vf, FACE_SHARPEN) if f)
     background = FACE_BG_CHEAP if p["cheap_filters"] else FACE_BG
     vf = (f"[0:v]split[bg0][fg0];"
           f"[bg0]{background}[bg];"
           f"[fg0]crop={FACE_FG_CROP},scale={W}:-1,{enhance}[fg];"
-          f"[bg][fg]overlay=(W-w)/2:(H-h)/2{_out_scale(p)},format=yuv420p[o]")
+          f"[bg][fg]overlay=(W-w)/2:{FACE_SEAM_Y}-h{_out_scale(p)},format=yuv420p[o]")
     encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
                 "-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
                + encode.video_args(p) + ["-loglevel", "error", out])

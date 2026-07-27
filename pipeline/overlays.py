@@ -156,6 +156,26 @@ CAPTION_CENTER_Y_LEGACY = 1600
 PLATFORM_UI_RESERVED_PX = 320
 PLATFORM_UI_AD_SAFE_PX = 480
 
+# Caption bar geometry, in one place. Three things depend on it: make_caption
+# draws the bar, the vertical builder aligns the sharp footage band's bottom edge
+# to it (screenshare_vertical.FACE_SEAM_Y), and the tests assert the safe zone.
+# It used to be re-derived in each, which is exactly how a caption move and the
+# framing drift apart without anything failing.
+CAPTION_LINE_H = 84
+CAPTION_PAD_Y = 34
+
+
+def caption_bar_y(lines=2, center_y=None):
+    """(top, bottom) of the rendered caption bar for a block of `lines` lines.
+
+    Two lines is the maximum make_caption renders, so `caption_bar_y(2)[0]` is
+    the highest a caption can ever reach — the value framing must clear.
+    """
+    center = CAPTION_CENTER_Y if center_y is None else int(center_y)
+    block_h = CAPTION_LINE_H * lines
+    top = center - block_h // 2
+    return top - CAPTION_PAD_Y, top + block_h + CAPTION_PAD_Y - 10
+
 
 def make_caption(text, highlights, out, center_y=None):
     """Render a transparent lower-third caption PNG with keyword highlighting.
@@ -173,14 +193,15 @@ def make_caption(text, highlights, out, center_y=None):
     hl = {h.lower() for h in highlights}
     lines = wrap(d, text, cf, W - 200)[:2]  # max 2 lines
 
-    line_h = 84
-    pad_x, pad_y = 46, 34
+    line_h = CAPTION_LINE_H
+    pad_x = 46
     block_h = line_h * len(lines)
     center = CAPTION_CENTER_Y if center_y is None else int(center_y)
     top = center - block_h // 2
+    bar_top, bar_bottom = caption_bar_y(len(lines), center_y)
     widest = max(d.textlength(ln, font=cf) for ln in lines)
-    bar = [(W - widest) / 2 - pad_x, top - pad_y,
-           (W + widest) / 2 + pad_x, top + block_h + pad_y - 10]
+    bar = [(W - widest) / 2 - pad_x, bar_top,
+           (W + widest) / 2 + pad_x, bar_bottom]
     rounded(d, bar, 28, (10, 12, 16, 205))
 
     y = top
