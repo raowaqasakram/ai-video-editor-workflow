@@ -143,17 +143,92 @@ def test_photo_backdrop_keeps_its_own_colour(tmp_path):
     assert (arr[0] - arr[2]) > 0.8 * (190 - 70), "the photo's warmth was graded away"
 
 
-def test_matted_subject_sits_in_the_original_footage_band():
-    """The subject must occupy the same band the un-matted styles use, leaving an
-    equal strip of room visible above and below. Drifting off that band is what the
-    creator flagged: the background is full-frame, so he has to sit inside it."""
+def _placement(priority, crown=365.0, shoulder=790.0, bottom=1143.0):
+    """Solve placement from this footage's measured proportions."""
     import matte
-    assert matte.FG_W == ssv.W
-    assert matte.FG_Y == (ssv.H - matte.FG_H) // 2, "band is not vertically centred"
-    top_band = matte.FG_Y
-    bottom_band = ssv.H - (matte.FG_Y + matte.FG_H)
-    assert top_band == bottom_band, "room must show equally above and below"
-    assert top_band > 300, "band too tall — the room stops being visible"
+    eye = crown + matte.EYE_FRAC_OF_HEAD * (shoulder - crown)
+    return matte.solve_placement((crown, eye, bottom), ssv.W, ssv.H,
+                                 comp={"priority": priority}, verbose=False)
+
+
+def test_composition_hits_the_subject_height_target():
+    """Subject height is the one target both priorities honour, so it must hold
+    either way."""
+    import matte
+    crown, bottom = 365.0, 1143.0
+    for priority in ("eyeline", "headroom"):
+        fg_w, fg_h, _x, _y = _placement(priority)
+        scale = fg_w / float(matte.PROBE_W)
+        frac = (bottom - crown) * scale / ssv.H
+        assert 0.60 <= frac <= 0.70, "%s: subject is %.0f%% of frame" % (
+            priority, 100 * frac)
+
+
+def test_eyeline_priority_puts_the_eyes_on_target():
+    import matte
+    crown, shoulder = 365.0, 790.0
+    eye = crown + matte.EYE_FRAC_OF_HEAD * (shoulder - crown)
+    fg_w, _h, _x, fg_y = _placement("eyeline")
+    scale = fg_w / float(matte.PROBE_W)
+    assert abs((fg_y + eye * scale) / ssv.H - 0.40) < 0.01
+
+
+def test_headroom_priority_puts_the_crown_on_target():
+    import matte
+    fg_w, _h, _x, fg_y = _placement("headroom")
+    scale = fg_w / float(matte.PROBE_W)
+    assert abs((fg_y + 365.0 * scale) / ssv.H - matte.COMPOSITION["headroom_frac"]) < 0.01
+
+
+def test_subject_is_horizontally_centred():
+    fg_w, _h, fg_x, _y = _placement("eyeline")
+    assert fg_x == (ssv.W - fg_w) // 2
+
+
+def test_placement_dimensions_are_even():
+    """yuv420p needs even chroma dimensions; an odd size makes ffmpeg silently crop
+    one row and desynchronise the mask from the footage."""
+    for priority in ("eyeline", "headroom"):
+        fg_w, fg_h, _x, _y = _placement(priority)
+        assert fg_w % 2 == 0 and fg_h % 2 == 0
+
+
+def test_table_edge_detection_finds_a_lit_surface():
+    """A table's far edge is where the frame gets brighter going down — a surface
+    catching room light, with chair legs and shadow above it."""
+    import matte
+    import numpy as np
+    plate = np.full((1920, 1080, 3), 70.0, dtype=np.float32)
+    plate[1450:] = 140.0
+    found = matte.detect_table_edge(plate, verbose=False)
+    assert found is not None and abs(found - 1450) < 40
+
+
+def test_table_edge_detection_declines_rather_than_guessing():
+    """A false positive slices the subject across the chest, which is far worse than
+    no occlusion, so anything without a clear lit surface must return None."""
+    import matte
+    import numpy as np
+    blank = np.full((1920, 1080, 3), 90.0, dtype=np.float32)
+    blank += np.linspace(0, 20, 1920, dtype=np.float32)[:, None, None]
+    assert matte.detect_table_edge(blank, verbose=False) is None
+
+    # A dark surface below is not a detectable table edge by this signal, and must
+    # not be reported as one.
+    darker = np.full((1920, 1080, 3), 120.0, dtype=np.float32)
+    darker[1450:] = 40.0
+    assert matte.detect_table_edge(darker, verbose=False) is None
+
+
+def test_grade_is_applied_to_the_whole_composite_not_the_foreground():
+    """The brief is explicit: composite first, grade globally. If the grade string
+    reaches the decode chain the foreground gets its own colour response."""
+    import inspect
+    import matte
+    src = inspect.getsource(matte.render_segment)
+    decode_vf = src.split('vf = "crop=555:588')[1].split("\n")[0]
+    assert "grade_vf" not in decode_vf, "grade leaked back into the decode chain"
+    assert 'enc_vf = ["-vf", grade_vf]' in src
 
 
 def test_unknown_backdrop_style_fails_loudly():
