@@ -25,8 +25,14 @@ social:
   framing:
     mode: "blurred-fit"
     # foreground crop from 1280x720 source (removes the StreamYard bottom banner):
-    foreground_crop: "555:588:362:0"   # w:h:x:y  -> scaled to 1080 wide (~1080x1144)
+    foreground_crop: "555:588:362:0"   # w:h:x:y  -> scaled to 1080 wide = 1080x1146
+                                       # (555 is odd; yuv420p even-crops it to 554)
     background: "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1"
+    # The sharp band is LIFTED, not centred: its bottom edge is pinned to the top
+    # of the caption bar so captions land on blur, never across the speaker's
+    # chest. Top blur band is 136px (was 387 when centred). Derived in code from
+    # overlays.caption_bar_y() — see screenshare_vertical.FACE_SEAM_Y.
+    foreground_seam: "bottom edge at overlays.caption_bar_y(2)[0] = 1282"
     # Sharpening is fixed; the colour half of the old `enhance` value is now
     # MEASURED per clip by pipeline/grade.py instead of hardcoded, because room
     # lighting and camera exposure drift week to week. Bounded to +/-8%, corrective

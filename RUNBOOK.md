@@ -232,10 +232,32 @@ tight 9:16 crop of 720p clips the shoulders):
 ```
 [0:v]scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturation=1.1[bg];
 [0:v]crop=555:588:362:0,scale=1080:-1,<MEASURED GRADE>,unsharp=5:5:0.4[fg];
-[bg][fg]overlay=(W-w)/2:(H-h)/2[v]
+[bg][fg]overlay=(W-w)/2:1282-h[v]
 ```
-`crop=555:588:362:0` keeps both shoulders and **removes the StreamYard banner**;
-bands top/bottom hold the name tag and captions.
+`crop=555:588:362:0` keeps both shoulders and **removes the StreamYard banner**.
+
+### The sharp band is lifted, not centred (2026-07-27)
+
+The vertical offset is `1282-h`, **not** `(H-h)/2`. Centred, the 1146px band ran
+387..1533, which left a 387px grey blur slab across the top and pushed the band's
+bottom edge past the caption bar at 1282 — so every caption was drawn across the
+speaker's chest and had to compete with him to stay readable. Lifting the band so
+its **bottom edge meets the caption bar's top edge** puts captions on clean blurred
+fill and shrinks the top band to 136px.
+
+- The seam is **derived, never hardcoded**:
+  `FACE_SEAM_Y = ro.caption_bar_y(2)[0]` in `screenshare_vertical.py`. Move the
+  caption and the framing follows. `overlays.caption_bar_y()` is the single source
+  for that geometry — `make_caption`, the framing and the tests all read it.
+- It is written as `1282-h` so **ffmpeg** computes the offset from the band's real
+  height at runtime. The height is not the obvious number: `crop=555` is odd,
+  yuv420p forces an even crop to 554, and `scale=1080:-1` then lands on **1146**
+  (not 1144). A Python-side guess misplaces the seam.
+- Accepted side effect: the name tag (y=110..248) now straddles the seam instead of
+  sitting wholly in the grey band. Its own opaque plate keeps it legible.
+
+`tests/test_pipeline_quality.py` asserts the seam equals the caption bar top, that
+the band still fits on the canvas, and that it is no longer centred.
 
 `<MEASURED GRADE>` used to be the fixed `eq=brightness=0.02:contrast=1.05:saturation=1.04`.
 `pipeline/grade.py` now measures the clip instead — it samples frames through
@@ -317,9 +339,13 @@ INPUT/<day>/Clips/Q<N>/
 ```
 
 ## Locked recipe (do not silently change)
-- Framing: **blurred-fit**, both shoulders visible, banner removed.
+- Framing: **blurred-fit**, both shoulders visible, banner removed, sharp band
+  **lifted** so its bottom edge meets the caption bar (not centred).
+- **No background replacement.** Designed studio plates and RVM matting were built
+  and then removed on 2026-07-27 — the creator rejected the look twice and asked for
+  it gone. The room in the footage is the room that ships. Do not reintroduce it.
 - Captions: **Roman Urdu** + English tech terms, 2-line, keyword accent, centred at
-  y=1330 — **inside the platform safe zone** (see below), not the old lower band.
+  y=1400 — **inside the platform safe zone** (see below), not the old lower band.
 - Title on all videos: **"Sr. Software Engineer | Mentor"**; handle **@raowaqasakram**.
 - **Animated** like/subscribe/follow outro with YouTube/Facebook/TikTok/LinkedIn on
   **every** video.
@@ -327,7 +353,7 @@ INPUT/<day>/Clips/Q<N>/
 - **Picture encoded at most twice, audio once.** Never reintroduce the concat *filter*
   into the final join, and never re-encode audio in an assembly stage.
 
-## Caption safe zone (resolved 2026-07-26)
+## Caption safe zone (resolved 2026-07-26, retuned 2026-07-27)
 
 TikTok, Reels, Shorts and Facebook Reels paint their username / description / audio row and
 the right-hand action rail over the bottom of the frame — roughly the **bottom 320px** for
@@ -335,28 +361,41 @@ organic posts, and **480px** under TikTok's strictest guidance. The old caption 
 the bar's bottom edge only ~212px up, i.e. **entirely inside** the band the apps write over,
 so captions could be partly covered in-feed.
 
-Captions are now centred at **y=1330** (`overlays.CAPTION_CENTER_Y`), which puts even a
-two-line bar at 1212–1438 — **482px clear**, so it survives the strictest zone on every app.
-The caption sits over the speaker's chest and never over the face.
+Captions are centred at **y=1400** (`overlays.CAPTION_CENTER_Y`), which puts a two-line bar
+at **1282–1508 — 412px of clearance**:
 
-The value is driven by the two-line case, which is the maximum `make_caption` renders:
+| zone | reserved | result |
+| --- | --- | --- |
+| organic username/description band | ~320px | clear by ~90px ✅ |
+| TikTok's strictest ad-safe zone | ~480px | inside by ~70px ⚠️ |
 
-```
-bar_bottom = center + line_h + 24   ->   center <= H - 480 - 108   ->   center <= 1332
-```
+That trade-off is deliberate. 1330 cleared even the ad-safe zone but sat visibly high on the
+speaker's chest; 480px reserves room for a CTA button organic posts do not have, so 412px is
+safe for normal posts everywhere. **If a clip is ever run as a paid ad, set
+`"caption_y": 1330` for that one.**
+
+Since 2026-07-27 the caption no longer sits over the chest at all: the sharp footage band is
+lifted so it ends exactly at the bar's top edge, and the caption sits on blurred fill (see
+§4).
+
+The value is driven by the two-line case, which is the maximum `make_caption` renders.
+`overlays.caption_bar_y(lines, center_y=None)` is the **single source** for that geometry —
+`make_caption` draws to it, `screenshare_vertical.FACE_SEAM_Y` aligns the framing to it, and
+the tests assert against it. Do not re-derive it anywhere.
 
 **The screen-share windows moved up with it.** `SCREEN_Y` 380→308 and `FACE_Y` 940→781: at
 the old position the camera well ran to y=1321 and the raised caption would have covered its
-bottom third. It now ends at ~1162, clearing the bar top at 1212. The vertical budget is:
+bottom third. It now ends at ~1162, clearing the bar top at 1282. The vertical budget is:
 
 ```
-name tag ends 248 | gap | shared screen (~405) | gap | camera (~381) | caption 1212
+name tag ends 248 | gap | shared screen (~405) | gap | camera (~381) | caption 1282
 ```
 
-⚠️ **These two constants are coupled.** Do not raise the caption without checking the camera
-well, or lower the wells without checking the caption. `tests/test_pipeline_quality.py`
-asserts both bounds (clearance from the UI band, and no overlap with the well), so a drift in
-either direction fails the suite rather than shipping a covered caption.
+⚠️ **Three things are coupled to the caption position:** the screen-share camera well, the
+platform UI band, and now the blurred-fit seam. Do not move the caption without checking all
+three. `tests/test_pipeline_quality.py` asserts every bound — clearance from the UI band, no
+overlap with the well, and seam == bar top — so a drift in any direction fails the suite
+rather than shipping a covered caption.
 
 Per-question override if ever needed: `"caption_y": <number>` in `config.json` (default
 `null` = the safe value). `overlays.CAPTION_CENTER_Y_LEGACY = 1600` is retained only to
