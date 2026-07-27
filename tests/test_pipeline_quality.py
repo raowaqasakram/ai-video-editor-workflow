@@ -80,11 +80,11 @@ def test_legacy_caption_position_would_fail_the_safe_zone():
 def test_every_style_is_either_blur_or_a_real_plate():
     """A style name with no backdrop recipe would fail only at render time."""
     assert ssv.STYLES[0] == "blur"
-    assert set(ssv.STYLES[1:]) == set(backdrop.STYLES)
+    assert set(ssv.STYLES[1:]) == set(backdrop.PLATE_STYLES)
 
 
 def test_plate_is_rendered_at_the_delivery_canvas(tmp_path):
-    for style in backdrop.STYLES:
+    for style in backdrop.PLATE_STYLES:
         out = backdrop.plate(style, str(tmp_path / ("%s.png" % style)))
         from PIL import Image
         with Image.open(out) as im:
@@ -98,6 +98,28 @@ def test_plate_is_cached_not_rebuilt(tmp_path):
     stamp = os.path.getmtime(path)
     backdrop.plate("studio_bands", path)
     assert os.path.getmtime(path) == stamp
+
+
+def test_photo_backdrop_covers_the_canvas_from_any_aspect(tmp_path):
+    """A landscape photo must cover-crop to 9:16 — never letterbox or squash."""
+    from PIL import Image
+    src = str(tmp_path / "room.jpg")
+    Image.new("RGB", (2400, 1600), (120, 110, 98)).save(src)
+    out = backdrop.plate("studio_real", str(tmp_path / "p.png"), photo=src)
+    with Image.open(out) as im:
+        assert im.size == (backdrop.W, backdrop.H)
+
+
+def test_photo_backdrop_is_darker_than_its_source(tmp_path):
+    """The plate sits behind the speaker, so it must be pulled down in exposure —
+    a backdrop brighter than the face pulls the eye off him."""
+    import numpy as np
+    from PIL import Image
+    src = str(tmp_path / "bright.jpg")
+    Image.new("RGB", (1200, 2000), (180, 175, 170)).save(src)
+    out = backdrop.plate("studio_real", str(tmp_path / "p.png"), photo=src)
+    with Image.open(out) as im:
+        assert np.asarray(im).mean() < 180 * 0.7
 
 
 def test_unknown_backdrop_style_fails_loudly():

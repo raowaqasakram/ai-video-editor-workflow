@@ -22,7 +22,9 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
                               # | inline [[s,e,"LABEL","icon"]] | null
   "outro":     null,          # null = cinematic brand outro
   "out_name":  "REEL.mp4",
-  "style":        "blur",     # camera framing: blur | studio_bands | studio_set
+  "style":        "blur",     # blur | studio_bands | studio_set | studio_real
+  "backdrop_photo": null,     # studio styles: a real room photo (filename in
+                              # assets/backdrops/, or a path). null = rendered set.
   "auto_grade":   true,       # measured colour correction (pipeline/grade.py)
   "denoise":      false,      # gentle noise reduction — only for rough audio
   "caption_y":    null        # null = the safe default (overlays.CAPTION_CENTER_Y)
@@ -67,6 +69,7 @@ TEMPLATE = {
     "out_name": "REEL.mp4",
     # render options (safe defaults — see the module docstring):
     "style": "blur",
+    "backdrop_photo": None,
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
@@ -132,6 +135,30 @@ def _write_metadata(cfg, out_dir, reel_path):
     print(f"metadata files written -> {out_dir}")
 
 
+# Shared backdrop photos live at the repo root, not per question, so every video
+# in a season sits in the same room — the consistency is the point.
+BACKDROP_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "assets", "backdrops")
+
+
+def _backdrop_photo(cfg):
+    """Resolve the optional `backdrop_photo` config value to a real path.
+
+    Accepts a bare filename (looked up in assets/backdrops/) or an explicit path.
+    Missing files warn and fall back to the rendered plate rather than failing the
+    whole render — a wrong filename should not cost a full re-encode.
+    """
+    name = cfg.get("backdrop_photo")
+    if not name:
+        return None
+    for cand in (name, os.path.join(BACKDROP_DIR, name)):
+        if os.path.exists(cand):
+            return os.path.abspath(cand)
+    print("WARNING: backdrop_photo %r not found (looked in %s) — "
+          "using the rendered plate." % (name, BACKDROP_DIR))
+    return None
+
+
 def process(clip, out_dir, force=False, quality="final", verify=True):
     """Build one question end to end. Returns the reel path, or None if a config
     template was just written and there is nothing to build yet."""
@@ -150,11 +177,15 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
     style = cfg.get("style", "blur")
     suffix = "" if quality == "final" else f".{quality}"
     suffix += "" if style == "blur" else f".{style}"
+    # The backdrop photo is part of the look, so it is part of the cache key too.
+    photo = _backdrop_photo(cfg)
+    if photo:
+        suffix += "." + os.path.splitext(os.path.basename(photo))[0]
     body = os.path.join(out_dir, f"_body{suffix}.mp4")
     if force or not os.path.exists(body):
         ssv.render(clip, body, shares=cfg.get("shares"), quality=quality,
                    auto_grade=cfg.get("auto_grade", True),
-                   style=cfg.get("style", "blur"))
+                   style=cfg.get("style", "blur"), backdrop_photo=photo)
     else:
         print(f"body cached -> {body} (pass --force to rebuild)")
 

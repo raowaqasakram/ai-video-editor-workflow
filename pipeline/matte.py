@@ -57,10 +57,28 @@ DOWNSAMPLE_RATIO = 0.5          # RVM's internal guidance, tuned for ~512px inpu
 # --- realism controls ---------------------------------------------------------
 # Exposure match: the plate is dark, the room light is flat and bright.
 SUBJECT_GAIN = 0.90
-# Rim light: accent spill along the alpha edge, as a backlit subject would pick up.
+# Rim light: spill along the alpha edge, as a subject in front of a lit backdrop
+# picks up.
+#
+# This used to be brand blue, which was a mistake worth spelling out. A rim light is
+# the *plate's* light landing on the subject, so its colour is dictated by the set,
+# not by the brand palette. Blue-edging a warm-lit room put a cyan outline around
+# his shoulders and hair that no real light in the scene could have produced, and an
+# impossible edge colour reads as "cut out" instantly — it was undoing the matte
+# quality it was meant to sell. studio_real is lit by tungsten practicals, so the
+# rim is now warm and much weaker. Brand colour belongs in the plate and the
+# graphics, never on the subject's edge.
 RIM_WIDTH = 9                   # px of edge band
-RIM_STRENGTH = 0.38
-RIM_RGB = (0, 174, 239)         # brand accent, matching the studio_bands plate
+RIM_STRENGTH = 0.22
+RIM_RGB = (232, 196, 150)       # warm practical spill, matching the room's lamps
+
+# Contact shadow. Without one the subject sits in front of the plate with no
+# relationship to it, which the eye reads as a sticker on a photo however good the
+# alpha is. A real body blocks the room light and drops a soft, offset shadow onto
+# what is behind it. Offsets are down-and-left because the key sits upper-left.
+SHADOW_OFFSET = (-26, 30)       # dx, dy in px
+SHADOW_BLUR = 55                # very soft: the backdrop is metres behind him
+SHADOW_STRENGTH = 0.45
 
 # Bottom fade — not cosmetic, it fixes a real artefact.
 #
@@ -102,6 +120,20 @@ def _edge_band(alpha):
     return cv2.blur(np.maximum(band, inner), (k, k))
 
 
+def _soften(mask, quarter):
+    """Very wide blur of a full-canvas mask, done at quarter resolution.
+
+    A sigma-55 gaussian at 1080x1920 on every frame is real money; for a shadow this
+    soft the downscale is invisible, and it makes the blur roughly an order of
+    magnitude cheaper.
+    """
+    import cv2
+    small = cv2.resize(mask, quarter, interpolation=cv2.INTER_AREA)
+    small = cv2.GaussianBlur(small, (0, 0), SHADOW_BLUR / 4.0)
+    return cv2.resize(small, (mask.shape[1], mask.shape[0]),
+                      interpolation=cv2.INTER_LINEAR)
+
+
 def render_segment(video, start, dur, out, p, grade_vf, plate_png,
                    infer_w=INFER_W, verbose=True):
     """Matte `video[start:start+dur]` onto `plate_png` and encode to `out`.
@@ -135,6 +167,15 @@ def render_segment(video, start, dur, out, p, grade_vf, plate_png,
     fx1, fy1 = fx0 + (cx1 - cx0), fy0 + (cy1 - cy0)
     if cx1 <= cx0 or cy1 <= cy0:
         raise ValueError("foreground placement leaves nothing on canvas")
+
+    # Same overlap maths again for the offset shadow, which lands on a different
+    # rectangle and can clip differently at the canvas edges.
+    sdx, sdy = SHADOW_OFFSET
+    sx0, sy0 = max(0, FG_X + sdx), max(0, FG_Y + sdy)
+    sx1, sy1 = min(p["w"], FG_X + sdx + FG_W), min(p["h"], FG_Y + sdy + FG_H)
+    sfx0, sfy0 = sx0 - (FG_X + sdx), sy0 - (FG_Y + sdy)
+    sfx1, sfy1 = sfx0 + (sx1 - sx0), sfy0 + (sy1 - sy0)
+    quarter = (p["w"] // 4, p["h"] // 4)
 
     # The grade and sharpen happen in the decode chain, so the matte sees exactly
     # the pixels that will be composited.
@@ -171,7 +212,13 @@ def render_segment(video, start, dur, out, p, grade_vf, plate_png,
             subject = fg.astype(np.float32) * SUBJECT_GAIN
             rim = _edge_band(alpha)[:, :, None] * (RIM_STRENGTH * rim_rgb)
 
-            out_frame = plate.copy()
+            # Shadow first: it darkens the plate, then the subject goes on top of
+            # the already-shadowed backdrop.
+            shad = np.zeros((p["h"], p["w"]), dtype=np.float32)
+            shad[sy0:sy1, sx0:sx1] = alpha[sfy0:sfy1, sfx0:sfx1]
+            shad = _soften(shad, quarter)
+            out_frame = plate * (1.0 - SHADOW_STRENGTH * shad[:, :, None])
+
             region = out_frame[cy0:cy1, cx0:cx1, :]
             a = alpha[fy0:fy1, fx0:fx1, None]
             region[:] = (subject[fy0:fy1, fx0:fx1] * a
@@ -210,10 +257,14 @@ if __name__ == "__main__":
     ap.add_argument("--dur", type=float, default=None)
     ap.add_argument("--style", default="studio_bands")
     ap.add_argument("--quality", default="final")
+    ap.add_argument("--photo", default=None,
+                    help="real room photo to use as the plate instead of the "
+                         "rendered set")
     args = ap.parse_args()
     prof = encode.profile(args.quality)
     plate = backdrop.plate(args.style, os.path.join(
-        os.path.dirname(os.path.abspath(args.out)), "plate_%s.png" % args.style))
+        os.path.dirname(os.path.abspath(args.out)), "plate_%s.png" % args.style),
+        photo=args.photo)
     render_segment(args.video, args.start,
                    args.dur if args.dur else encode.duration(args.video),
                    args.out, prof, "", plate)

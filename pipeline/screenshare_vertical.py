@@ -386,7 +386,7 @@ def _measure_grade(video, timeline, workdir, enabled):
 
 def render(video, out, shares=None, workdir=None, quality="final",
            orientation="vertical", auto_grade=True, workers=WORKERS,
-           style="blur"):
+           style="blur", backdrop_photo=None):
     """Build the screen-share-aware vertical for `video` -> `out`.
 
     Args:
@@ -396,6 +396,8 @@ def render(video, out, shares=None, workdir=None, quality="final",
         quality: "final" | "preview" | "draft" (see pipeline/encode.py).
         orientation: delivery canvas; only "vertical" is wired up for now.
         auto_grade: measure and apply the bounded colour correction.
+        backdrop_photo: path to a real room photo to use as the backdrop plate
+            instead of the rendered one. Only meaningful for the studio styles.
         workers: parallel segment encodes.
         style: camera-segment framing — see STYLES. Screen-share segments always
             use the stacked layout regardless, because the shared screen has to
@@ -428,8 +430,15 @@ def render(video, out, shares=None, workdir=None, quality="final",
     plate_png = set_mask = None
     if style != "blur":
         plate_style = MATTE_PLATE_STYLE if style == MATTE_STYLE else style
+        # A supplied photo makes the plate a real room instead of a rendered one.
+        # It is part of the plate filename so switching photos rebuilds the cache
+        # rather than silently reusing the previous look.
+        tag = plate_style
+        if backdrop_photo:
+            tag += "_" + os.path.splitext(os.path.basename(backdrop_photo))[0]
         plate_png = backdrop.plate(plate_style,
-                                   os.path.join(workdir, f"plate_{plate_style}.png"))
+                                   os.path.join(workdir, f"plate_{tag}.png"),
+                                   photo=backdrop_photo)
         if style == "studio_set":
             set_mask = os.path.join(workdir, "set_mask.png")
             _rounded_mask(set_mask, SET_WIN_W, SET_WIN_H, radius=SET_RADIUS)
