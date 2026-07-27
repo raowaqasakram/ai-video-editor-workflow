@@ -243,3 +243,6 @@ logs/*
 
 # Derived encode cache (normalised outro parts, per profile)
 pipeline/_cache/
+
+# Background-matting venv (background replacement was removed; never commit a venv)
+.venv-matting/

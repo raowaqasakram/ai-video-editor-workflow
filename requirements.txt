@@ -28,9 +28,6 @@ pytesseract
 # --- Speech -------------------------------------------------------------------
 # Pulls torch. Local only — no audio ever leaves this machine.
 openai-whisper
-# Listed explicitly because pipeline work uses torch directly (Robust Video
-# Matting for background replacement), not only as a whisper dependency.
-torch
 
 # --- Testing ------------------------------------------------------------------
 pytest
@@ -52,15 +49,9 @@ pytest-cov
 #                           whole point of pipeline/*.py (minimise tokens per
 #                           video). Leaving these out also keeps API keys out of
 #                           the project entirely.
-# rembg / mediapipe / onnxruntime   installed in .venv-matting (Python 3.11), not
-#                           here: current releases need Python >= 3.10 and pulling
-#                           them into 3.9 would risk the working pipeline. For
-#                           video, Robust Video Matting on the torch above is the
-#                           better tool anyway — it is temporally stable, where
-#                           per-frame matting flickers.
-#
-# Background-matting environment (optional, only for background replacement):
-#   /opt/homebrew/bin/python3.11 -m venv .venv-matting
-#   .venv-matting/bin/pip install -U pip wheel
-#   .venv-matting/bin/pip install rembg onnxruntime mediapipe \
-#                                 opencv-python-headless pillow numpy
+# rembg / mediapipe / onnxruntime / torch-based matting   background REPLACEMENT
+#                           was built and then removed: a swapped-in backdrop never
+#                           read as a real room, and the room the footage was shot
+#                           in is the one that ships. Camera segments use the
+#                           blurred-fit framing. Do not add these back without a
+#                           request for it.
