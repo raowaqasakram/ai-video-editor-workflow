@@ -40,23 +40,31 @@ import encode  # noqa: E402
 # yuv420p forces ffmpeg to crop 554, so a derived height disagrees with what ffmpeg
 # produces. See screenshare_vertical.SET_WIN_H for the same trap.
 #
-# The subject is scaled UP and placed higher than the un-matted styles, and that is
-# a composition fix rather than a preference. At the framing the other styles use
-# (1080x1146 centred), removing the room left ~740px of empty backdrop above his
-# head — 38% of the frame — so he read as a small cut-out floating on a gradient.
-# Filling the frame the way a real studio shot would means overflowing the canvas
-# on three sides and letting it crop, which is why the compositor below works in
-# overlap rectangles instead of assuming the foreground fits.
-FG_W, FG_H = 1350, 1432         # 1.25x the shipping crop
-FG_X = (1080 - FG_W) // 2       # negative: overflows left/right, cropped
-FG_Y = -16                      # head lands just below the name-tag band
+# This matches the un-matted styles exactly: crop 555x588 scaled to 1080 wide is
+# 1080x1144, centred on the 1080x1920 canvas, so the subject occupies y 388..1532
+# with an equal 388px band of room above and below.
+#
+# An earlier version scaled the subject up 1.25x and pushed it to the top of the
+# frame, on the reasoning that removing the room left ~38% of the frame empty above
+# his head. That reasoning was sound *for the blue gradient plate* — empty gradient
+# is dead space. It stopped being true the moment the plate became a photograph of
+# a real room: that space is now the room, and showing it is the entire point. The
+# creator asked for the subject to sit in the original band with background visible
+# top and bottom, which is what this restores.
+FG_W, FG_H = 1080, 1144         # crop 555x588 scaled to canvas width
+FG_X = (1080 - FG_W) // 2       # 0 — fits exactly, no horizontal overflow
+FG_Y = (1920 - FG_H) // 2       # 388 — equal band of room above and below
 
 INFER_W = 512                   # RVM is happiest 512-1024px; 512 is the speed/qualityknee
 DOWNSAMPLE_RATIO = 0.5          # RVM's internal guidance, tuned for ~512px input
 
 # --- realism controls ---------------------------------------------------------
-# Exposure match: the plate is dark, the room light is flat and bright.
-SUBJECT_GAIN = 0.90
+# Exposure match. The 0.90 here was set when the plate was a near-black gradient and
+# the subject had to be pulled down to sit in it. A photographed room is nowhere near
+# that dark, and darkening him against it made the background the brightest thing in
+# frame — the eye goes to the window instead of his face. Left at unity; the plate is
+# pulled down slightly instead (backdrop.PHOTO["exposure"]).
+SUBJECT_GAIN = 1.0
 # Rim light: spill along the alpha edge, as a subject in front of a lit backdrop
 # picks up.
 #
@@ -80,20 +88,19 @@ SHADOW_OFFSET = (-26, 30)       # dx, dy in px
 SHADOW_BLUR = 55                # very soft: the backdrop is metres behind him
 SHADOW_STRENGTH = 0.45
 
-# Bottom fade — not cosmetic, it fixes a real artefact.
+# Bottom edge of the subject.
 #
-# The footage region is 1146px tall, so once the background is removed the torso
-# simply STOPS at its bottom edge: a hard horizontal line across the chest that
-# reads as the speaker having been sliced in half. The crop cannot be extended
-# (there is no more picture below it), and scaling up until the torso reaches the
-# frame bottom would push the face down into the captions and cut the shoulders,
-# which the locked recipe forbids.
+# The crop ends mid-chest, so once the room is removed the torso simply STOPS at the
+# band's lower edge. Against the old near-black plate that hard line looked like the
+# speaker had been sliced in half, so the alpha was faded out over the last 220px to
+# let him fall away into shadow.
 #
-# Fading the alpha out over the last stretch instead lets him fall away into the
-# set. Against a dark plate that reads as "lit from above, falling into shadow",
-# which is what a real subject on a dim set does. The caption bar sits over most
-# of this band anyway.
-BOTTOM_FADE_PX = 220
+# On a photograph of a real room that trade goes the other way. The creator's note
+# was explicit — cut at that line, do not dissolve — and he is right: a long fade
+# over a *visible* room makes him look semi-transparent, like a ghost standing in
+# an office, which is far worse than an honest edge. A short fade is kept only to
+# take the aliasing off the cut; it is not enough to read as a dissolve.
+BOTTOM_FADE_PX = 18
 
 
 def _load_model():

@@ -110,16 +110,50 @@ def test_photo_backdrop_covers_the_canvas_from_any_aspect(tmp_path):
         assert im.size == (backdrop.W, backdrop.H)
 
 
-def test_photo_backdrop_is_darker_than_its_source(tmp_path):
-    """The plate sits behind the speaker, so it must be pulled down in exposure —
-    a backdrop brighter than the face pulls the eye off him."""
+def test_photo_backdrop_is_eased_down_but_not_crushed(tmp_path):
+    """A room photo must be pulled down slightly — a backdrop brighter than the face
+    pulls the eye off him — but only slightly.
+
+    The lower bound is the real regression guard. An earlier version graded photos
+    to 0.52 exposure and 0.72 saturation, which turned a good office photo into dark
+    mush and was rejected: the whole reason to use a photograph is that it looks like
+    a room, and crushing it throws that away.
+    """
     import numpy as np
     from PIL import Image
     src = str(tmp_path / "bright.jpg")
     Image.new("RGB", (1200, 2000), (180, 175, 170)).save(src)
     out = backdrop.plate("studio_real", str(tmp_path / "p.png"), photo=src)
     with Image.open(out) as im:
-        assert np.asarray(im).mean() < 180 * 0.7
+        mean = np.asarray(im).mean()
+    assert mean < 180, "plate must not be brighter than its source"
+    assert mean > 180 * 0.7, "plate is crushed — the photo stops reading as a room"
+
+
+def test_photo_backdrop_keeps_its_own_colour(tmp_path):
+    """Saturation must survive. A desaturated office photo is halfway back to the
+    grey-blue plate the creator rejected."""
+    import numpy as np
+    from PIL import Image
+    src = str(tmp_path / "warm.jpg")
+    Image.new("RGB", (1200, 2000), (190, 120, 70)).save(src)
+    out = backdrop.plate("studio_real", str(tmp_path / "p.png"), photo=src)
+    with Image.open(out) as im:
+        arr = np.asarray(im).astype(float).reshape(-1, 3).mean(axis=0)
+    assert (arr[0] - arr[2]) > 0.8 * (190 - 70), "the photo's warmth was graded away"
+
+
+def test_matted_subject_sits_in_the_original_footage_band():
+    """The subject must occupy the same band the un-matted styles use, leaving an
+    equal strip of room visible above and below. Drifting off that band is what the
+    creator flagged: the background is full-frame, so he has to sit inside it."""
+    import matte
+    assert matte.FG_W == ssv.W
+    assert matte.FG_Y == (ssv.H - matte.FG_H) // 2, "band is not vertically centred"
+    top_band = matte.FG_Y
+    bottom_band = ssv.H - (matte.FG_Y + matte.FG_H)
+    assert top_band == bottom_band, "room must show equally above and below"
+    assert top_band > 300, "band too tall — the room stops being visible"
 
 
 def test_unknown_backdrop_style_fails_loudly():

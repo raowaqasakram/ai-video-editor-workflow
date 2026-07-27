@@ -278,15 +278,40 @@ def _studio_room():
     return img
 
 
-def _photo_room(photo_path):
+# How hard a room photo is processed before the speaker goes in front of it.
+#
+# The first version pushed all of these hard — 20px defocus, 0.72 saturation, 0.52
+# exposure — reasoning that a backdrop should recede behind the subject. On a real
+# photograph that was simply wrong: it destroyed the thing that made the photo worth
+# using. A good office photo already looks like an office, and the creator's note
+# was exactly this — use the actual image and put him in front of it.
+#
+# So the default is now close to verbatim. The only treatments left are the ones
+# that stop the composite looking like a sticker on a postcard:
+#
+#   defocus   a few px only. The camera is focused on him, not on a wall metres
+#             behind him, so a *slightly* soft background is what a real lens gives.
+#             Zero looks wrong in the other direction — everything equally sharp is
+#             the classic greenscreen tell.
+#   exposure  a touch under, because the room in the photo was lit for the photo,
+#             not for him. Nothing near the old 0.52.
+#   falloff   mild darkening at the edges, so the corners do not pull the eye off
+#             his face. Vignette, not a spotlight.
+PHOTO = {
+    "defocus": 4.0,
+    "saturation": 1.0,          # keep the photo's own colour
+    "exposure": 0.92,
+    "falloff": 0.14,            # 0 = flat, the old value was 0.34
+}
+
+
+def _photo_room(photo_path, tune=None):
     """Build the plate from a real photograph of a room.
 
     Nothing rendered will ever beat an actual photo, so this is the preferred path
-    when one is available. The photo is treated the way a camera would treat that
-    room in the background of a portrait: cropped to the vertical frame, thrown far
-    out of focus, pulled down in exposure and saturation so it sits behind the
-    speaker instead of competing with him, and darkened at the edges.
+    when one is available. See PHOTO above for how little is done to it and why.
     """
+    cfg = dict(PHOTO, **(tune or {}))
     src = Image.open(photo_path).convert("RGB")
     # Cover-crop to 9:16 — never letterbox, never squash.
     scale = max(W / src.width, H / src.height)
@@ -295,15 +320,17 @@ def _photo_room(photo_path):
     left, top = (src.width - W) // 2, (src.height - H) // 2
     img = src.crop((left, top, left + W, top + H))
 
-    img = img.filter(ImageFilter.GaussianBlur(ROOM["defocus"]))
+    if cfg["defocus"]:
+        img = img.filter(ImageFilter.GaussianBlur(cfg["defocus"]))
     arr = np.asarray(img).astype(np.float32)
-    grey = arr.mean(axis=2, keepdims=True)
-    arr = (grey + (arr - grey) * 0.72) * 0.52         # desaturate, then underexpose
-    # Radial falloff: a real background lit for a portrait is brightest behind the
-    # subject and falls away, which also stops the corners pulling the eye outward.
-    gy, gx = np.mgrid[0:H, 0:W].astype(np.float32)
-    r = np.sqrt(((gx - W / 2) / (W / 2)) ** 2 + ((gy - H / 2.4) / (H / 2)) ** 2)
-    arr *= np.clip(1.06 - 0.34 * r, 0.35, 1.0)[:, :, None]
+    if cfg["saturation"] != 1.0:
+        grey = arr.mean(axis=2, keepdims=True)
+        arr = grey + (arr - grey) * cfg["saturation"]
+    arr *= cfg["exposure"]
+    if cfg["falloff"]:
+        gy, gx = np.mgrid[0:H, 0:W].astype(np.float32)
+        r = np.sqrt(((gx - W / 2) / (W / 2)) ** 2 + ((gy - H / 2.4) / (H / 2)) ** 2)
+        arr *= np.clip(1.0 - cfg["falloff"] * r, 0.35, 1.0)[:, :, None]
     return Image.fromarray(arr.clip(0, 255).astype(np.uint8))
 
 
@@ -413,9 +440,16 @@ def plate(style, out_path, hairline=True, photo=None):
         for pool in spec["pools"]:
             img = _pool(img, *pool)
         img = _bokeh(img, spec["bokeh"], spec["bokeh_rgb"], spec["bokeh_blur"])
-    img = _grain(img)
-    if hairline:
-        ImageDraw.Draw(img).rectangle([0, 0, W, 5], fill=ACCENT)
+
+    # Grain and the accent hairline are for the *drawn* plates. A photograph already
+    # carries its own grain, and the hairline is a 5px band of brand blue across the
+    # top — on a rendered set it reads as a design element, but on a photo of a real
+    # room it is the one object in frame that could not physically be there, and it
+    # is precisely the kind of stray blue that got the first version rejected.
+    if not photo:
+        img = _grain(img)
+        if hairline:
+            ImageDraw.Draw(img).rectangle([0, 0, W, 5], fill=ACCENT)
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     img.save(out_path)
