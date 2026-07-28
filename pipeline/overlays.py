@@ -177,7 +177,19 @@ def caption_bar_y(lines=2, center_y=None):
     return top - CAPTION_PAD_Y, top + block_h + CAPTION_PAD_Y - 10
 
 
-def make_caption(text, highlights, out, center_y=None):
+# Caption colour schemes. "dark" is the original: white text on a near-opaque
+# dark plate, which is what makes text readable over *footage*. "light" is for the
+# white-fill framing (screenshare_vertical.FACE_BG_WHITE), where the caption sits
+# on a solid white band — there a dark plate would read as a black box floating on
+# white, so the text is inked directly onto the white instead.
+CAPTION_INK = (10, 12, 16, 255)          # near-black, matches BG
+CAPTION_THEMES = {
+    "dark":  {"text": WHITE, "plate": (10, 12, 16, 205)},
+    "light": {"text": CAPTION_INK, "plate": None},
+}
+
+
+def make_caption(text, highlights, out, center_y=None, theme="dark"):
     """Render a transparent lower-third caption PNG with keyword highlighting.
 
     Args:
@@ -186,7 +198,10 @@ def make_caption(text, highlights, out, center_y=None):
         out: Output PNG path.
         center_y: Vertical centre of the block. Defaults to CAPTION_CENTER_Y;
             override only with a value that still clears the platform UI band.
+        theme: "dark" (white text on a dark plate, for captions over footage) or
+            "light" (dark text, no plate, for captions on the white fill band).
     """
+    scheme = CAPTION_THEMES[theme]
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     cf = font(60, "Heavy")
@@ -200,9 +215,10 @@ def make_caption(text, highlights, out, center_y=None):
     top = center - block_h // 2
     bar_top, bar_bottom = caption_bar_y(len(lines), center_y)
     widest = max(d.textlength(ln, font=cf) for ln in lines)
-    bar = [(W - widest) / 2 - pad_x, bar_top,
-           (W + widest) / 2 + pad_x, bar_bottom]
-    rounded(d, bar, 28, (10, 12, 16, 205))
+    if scheme["plate"]:
+        bar = [(W - widest) / 2 - pad_x, bar_top,
+               (W + widest) / 2 + pad_x, bar_bottom]
+        rounded(d, bar, 28, scheme["plate"])
 
     y = top
     for ln in lines:
@@ -210,7 +226,7 @@ def make_caption(text, highlights, out, center_y=None):
         x = (W - lw) / 2
         for word in ln.split():
             key = word.strip(".,!?/()").lower()
-            col = ACCENT if key in hl else WHITE
+            col = ACCENT if key in hl else scheme["text"]
             d.text((x, y), word, font=cf, fill=col)
             x += d.textlength(word + " ", font=cf)
         y += line_h

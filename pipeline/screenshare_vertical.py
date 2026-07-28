@@ -103,6 +103,17 @@ FACE_BG = "scale=-1:1920,crop=1080:1920,boxblur=26:2,eq=brightness=-0.16:saturat
 # is NOT pixel-identical, so `final` never uses it.
 FACE_BG_CHEAP = ("scale=-1:240,crop=135:240,boxblur=4:1,scale=1080:1920,"
                  "eq=brightness=-0.16:saturation=1.1")
+# Solid-white fill instead of the blurred one: the bands above and below the
+# footage become clean white rather than a dark, blue-cast smear of the room.
+# Derived from the source frame (rather than a lavfi `color` input) purely so the
+# background keeps the video's own timestamps — an extra input would need its own
+# PTS reset and a `shortest` guard. Scaling to 4x4 first makes the fill almost
+# free; `drawbox=t=fill` paints broadcast white in the native pixel format.
+FACE_BG_WHITE = "scale=4:4,drawbox=t=fill:c=white,scale=1080:1920,setsar=1"
+BACKGROUNDS = {"blur": FACE_BG, "white": FACE_BG_WHITE}
+# The caption theme each background implies: white text needs the dark plate to
+# survive over footage; on the white fill it would be a black box, so ink it dark.
+BACKGROUND_CAPTION_THEME = {"blur": "dark", "white": "light"}
 FACE_SHARPEN = "unsharp=5:5:0.4"    # the colour half of the old FACE_ENH is now measured
 
 # Colour is measured through the shipping crop, so the analysis sees the same
@@ -242,18 +253,23 @@ def _out_scale(p):
     return "" if (p["w"], p["h"]) == (W, H) else ",scale=%d:%d" % (p["w"], p["h"])
 
 
-def _encode_face(video, start, dur, out, p, grade_vf):
-    """Blurred-fit framing: sharp crop over a blurred, darkened fill.
+def _encode_face(video, start, dur, out, p, grade_vf, bg="blur", seam=None):
+    """Fit framing: sharp crop over a fill (blurred room, or solid white).
 
     Horizontally centred, vertically lifted so the band's bottom edge meets the
-    caption bar (FACE_SEAM_Y) rather than sitting in the middle of the canvas.
+    caption bar (`seam`, default FACE_SEAM_Y) rather than sitting in the middle
+    of the canvas.
     """
     enhance = ",".join(f for f in (grade_vf, FACE_SHARPEN) if f)
-    background = FACE_BG_CHEAP if p["cheap_filters"] else FACE_BG
+    if bg == "white":
+        background = FACE_BG_WHITE          # already trivial; no cheap variant needed
+    else:
+        background = FACE_BG_CHEAP if p["cheap_filters"] else BACKGROUNDS[bg]
+    seam = FACE_SEAM_Y if seam is None else int(seam)
     vf = (f"[0:v]split[bg0][fg0];"
           f"[bg0]{background}[bg];"
           f"[fg0]crop={FACE_FG_CROP},scale={W}:-1,{enhance}[fg];"
-          f"[bg][fg]overlay=(W-w)/2:{FACE_SEAM_Y}-h{_out_scale(p)},format=yuv420p[o]")
+          f"[bg][fg]overlay=(W-w)/2:{seam}-h{_out_scale(p)},format=yuv420p[o]")
     encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
                 "-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
                + encode.video_args(p) + ["-loglevel", "error", out])
@@ -325,7 +341,8 @@ def _measure_grade(video, timeline, workdir, enabled):
 
 
 def render(video, out, shares=None, workdir=None, quality="final",
-           orientation="vertical", auto_grade=True, workers=WORKERS):
+           orientation="vertical", auto_grade=True, workers=WORKERS,
+           background="blur", caption_y=None):
     """Build the screen-share-aware vertical for `video` -> `out`.
 
     Args:
@@ -336,6 +353,11 @@ def render(video, out, shares=None, workdir=None, quality="final",
         orientation: delivery canvas; only "vertical" is wired up for now.
         auto_grade: measure and apply the bounded colour correction.
         workers: parallel segment encodes.
+        background: fill behind the footage band — "blur" (the room, defocused)
+            or "white" (clean white bands above and below).
+        caption_y: the caption centre this body will be captioned at. The seam is
+            derived from it, so the footage band always ends exactly where the
+            caption starts. None = overlays.CAPTION_CENTER_Y.
 
     Camera segments use the blurred-fit framing; screen-share segments use the
     stacked layout, so the shared screen stays legible.
@@ -346,6 +368,13 @@ def render(video, out, shares=None, workdir=None, quality="final",
     os.makedirs(workdir, exist_ok=True)
     p = encode.profile(quality, orientation)
     dur_total = encode.duration(video)
+    if background not in BACKGROUNDS:
+        raise KeyError("unknown background %r (have %s)"
+                       % (background, ", ".join(sorted(BACKGROUNDS))))
+    # Pin the seam to wherever the caption will actually sit, so moving the
+    # caption never leaves the footage band overlapping it.
+    seam = ro.caption_bar_y(2, caption_y)[0]
+    print("framing: %s fill, footage band ends at y=%d" % (background, seam))
 
     if shares is None:
         shares = detect_share_segments(video)
@@ -368,7 +397,7 @@ def render(video, out, shares=None, workdir=None, quality="final",
         dur = round(e - s, 3)
         print(f"  [{kind}] {s:.2f}-{e:.2f}s ({dur:.2f}s) -> {os.path.basename(seg)}")
         if kind == "face":
-            jobs.append((video, s, dur, seg, p, grade_vf))
+            jobs.append((video, s, dur, seg, p, grade_vf, background, seam))
         else:
             jobs.append((video, s, dur, bg_png, smask_png, fmask_png, seg, p, grade_vf))
         parts.append(seg)

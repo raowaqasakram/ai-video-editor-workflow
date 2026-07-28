@@ -24,7 +24,9 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "out_name":  "REEL.mp4",
   "auto_grade":   true,       # measured colour correction (pipeline/grade.py)
   "denoise":      false,      # gentle noise reduction — only for rough audio
-  "caption_y":    null        # null = the safe default (overlays.CAPTION_CENTER_Y)
+  "caption_y":    null,       # null = the safe default (overlays.CAPTION_CENTER_Y)
+  "background":   "blur",     # fill around the footage band: "blur" | "white"
+  "caption_theme": null       # null = whatever the background implies
 }
 
 Re-runs are cheap: the heavy body render is cached (delete _body.mp4 or pass
@@ -68,6 +70,8 @@ TEMPLATE = {
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
+    "background": "blur",
+    "caption_theme": None,
     # upload metadata (ALWAYS filled — catchy title + description + hashtags):
     "video_title": "CATCHY TITLE UNDER 70 CHARS",
     "thumbnail_title": "SHORT PUNCHY THUMBNAIL TEXT",
@@ -141,13 +145,22 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         return None
     cfg = json.load(open(cfg_path))
 
+    # The fill and the caption are one decision: white bands want dark text, a
+    # blurred room wants the dark plate. The caption position feeds the body too,
+    # because the footage band's bottom edge is pinned to the caption's top edge.
+    background = cfg.get("background") or "blur"
+    caption_y = cfg.get("caption_y")
+    caption_theme = (cfg.get("caption_theme")
+                     or ssv.BACKGROUND_CAPTION_THEME[background])
+
     # 1) body (screen-share-aware, cached). Cheap-quality bodies are cached under
     #    their own name so an iteration pass can never overwrite the shipping one.
     suffix = "" if quality == "final" else f".{quality}"
     body = os.path.join(out_dir, f"_body{suffix}.mp4")
     if force or not os.path.exists(body):
         ssv.render(clip, body, shares=cfg.get("shares"), quality=quality,
-                   auto_grade=cfg.get("auto_grade", True))
+                   auto_grade=cfg.get("auto_grade", True),
+                   background=background, caption_y=caption_y)
     else:
         print(f"body cached -> {body} (pass --force to rebuild)")
 
@@ -176,7 +189,7 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         out_name=cfg.get("out_name", "REEL.mp4"),
         quality=quality,
         denoise=cfg.get("denoise", False),
-        caption_y=cfg.get("caption_y"))
+        caption_y=caption_y, caption_theme=caption_theme)
 
     # 4) upload deliverables (title/description/hashtags/metadata) — always
     _write_metadata(cfg, out_dir, reel)

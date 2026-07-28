@@ -259,6 +259,59 @@ fill and shrinks the top band to 136px.
 `tests/test_pipeline_quality.py` asserts the seam equals the caption bar top, that
 the band still fits on the canvas, and that it is no longer centred.
 
+### The fill can be white instead of the blurred room (2026-07-28)
+
+`config.json → "background"` selects what fills the canvas around the sharp band:
+
+| value | fill | caption theme it implies |
+| --- | --- | --- |
+| `"blur"` (default) | the room, defocused and darkened | `dark` — white text on a near-opaque plate |
+| `"white"` | solid white bands above and below | `light` — near-black text, **no** plate |
+
+These are **one decision, not two**. White text on a white band is invisible, and
+the dark plate on white reads as a black box floating in the frame — so
+`screenshare_vertical.BACKGROUND_CAPTION_THEME` maps each fill to its caption
+theme and `process_question.py` applies it automatically. `"caption_theme"`
+overrides it per video, but there is rarely a reason to.
+
+The white fill is `scale=4:4,drawbox=t=fill:c=white,scale=1080:1920` — derived
+from the source frame rather than a lavfi `color` input purely so the background
+inherits the video's own timestamps (an extra input would need its own PTS reset
+and a `shortest` guard). Scaling to 4x4 before painting makes it near-free, and
+`drawbox` writes broadcast white in the native pixel format: measured 253/253/253
+on the export.
+
+**The seam follows the caption.** `render()` now derives the seam from the
+`caption_y` it is given (`ro.caption_bar_y(2, caption_y)[0]`) instead of reading
+the module default, so moving the caption moves the footage band with it.
+
+### Equal white borders — and what they cost (Q7, 2026-07-28)
+
+Because the seam is derived from the caption, the caption position is also what
+decides the *balance* of the two white bands:
+
+| `caption_y` | top border | bottom border | caption clearance |
+| --- | --- | --- | --- |
+| 1400 (default) | 136 | 638 | 412px ✅ |
+| 1460 | 196 | 578 | 352px ✅ |
+| **1651** | **387** | **387** | **161px ⚠️** |
+
+`1651` is the one value that centres the 1146px band exactly. The creator chose
+it on Q7 after being shown the trade-off: at 161px the caption bar sits **inside**
+the ~320px band TikTok/Reels/Shorts paint their username and description over, so
+it can be partly covered in feed. That is a deliberate, per-video decision —
+**do not promote it to the default.** `tests/test_pipeline_quality.py` asserts
+both halves of it: that 1651 produces equal borders, and that it fails the safe
+zone the default still passes.
+
+Getting equal borders *and* the safe zone at the same time needs a shorter band
+(≤828px, i.e. a `555:424` crop instead of `555:588`), which cuts the speaker
+higher on the chest. That variant was rendered and not chosen.
+
+Side effect at 1651: the name tag and the tech chips (anchored at y=110 and
+y=196) now sit wholly in the **white top band** rather than over footage. Both
+are dark plates, so they read as clean badges — checked on the export.
+
 `<MEASURED GRADE>` used to be the fixed `eq=brightness=0.02:contrast=1.05:saturation=1.04`.
 `pipeline/grade.py` now measures the clip instead — it samples frames through
 `signalstats` on the **shipping crop** (not the raw frame, which still contains the banner

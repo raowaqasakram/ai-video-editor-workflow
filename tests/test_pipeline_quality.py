@@ -86,6 +86,68 @@ def test_the_band_is_not_centred_anymore():
     assert ssv.FACE_SEAM_Y - ssv.FACE_FG_H != centred
 
 
+# --- fill / caption-theme coupling --------------------------------------------
+#
+# The fill behind the footage band and the caption's colours are ONE decision: on
+# the blurred room a caption needs its dark plate to stay readable, and on the
+# white fill that same plate reads as a black box floating on white. Splitting
+# them is how a video ships with white text on a white band.
+
+def test_every_background_has_a_caption_theme():
+    assert set(ssv.BACKGROUNDS) == set(ssv.BACKGROUND_CAPTION_THEME)
+    for theme in ssv.BACKGROUND_CAPTION_THEME.values():
+        assert theme in overlays.CAPTION_THEMES
+
+
+def test_the_white_fill_inks_captions_dark_and_drops_the_plate():
+    theme = overlays.CAPTION_THEMES[ssv.BACKGROUND_CAPTION_THEME["white"]]
+    assert theme["plate"] is None, "a dark plate on the white band is a black box"
+    assert sum(theme["text"][:3]) < 128, "dark ink is what makes it readable on white"
+
+
+def test_the_blurred_fill_keeps_the_readable_plate():
+    theme = overlays.CAPTION_THEMES[ssv.BACKGROUND_CAPTION_THEME["blur"]]
+    assert theme["plate"] is not None and theme["text"] == overlays.WHITE
+
+
+@pytest.mark.parametrize("caption_y", [1330, 1400, 1460, 1651])
+def test_the_seam_follows_the_caption_wherever_it_moves(caption_y):
+    """render() derives the seam from the caption centre, so a per-video
+    `caption_y` can never leave the footage band overlapping the caption."""
+    seam = overlays.caption_bar_y(2, caption_y)[0]
+    assert seam == _caption_bar(2, caption_y)[0]
+    assert seam - ssv.FACE_FG_H >= 0, "footage band would overflow the top"
+    assert seam < overlays.H
+
+
+def test_an_unknown_background_fails_loudly():
+    assert "sepia" not in ssv.BACKGROUNDS
+
+
+# The equal-borders look (Q7, 2026-07-28). caption_y=1651 is not an arbitrary
+# number: it is the one value that centres the footage band, because the seam is
+# derived from the caption. Recorded so the arithmetic behind it is not lost.
+EQUAL_BORDER_CAPTION_Y = 1651
+
+
+def test_equal_border_caption_y_centres_the_footage_band():
+    seam = overlays.caption_bar_y(2, EQUAL_BORDER_CAPTION_Y)[0]
+    top_border = seam - ssv.FACE_FG_H
+    bottom_border = overlays.H - seam
+    assert abs(top_border - bottom_border) <= 1, (
+        "borders are %d / %d, not equal" % (top_border, bottom_border))
+
+
+def test_equal_borders_cost_the_platform_safe_zone():
+    """The documented trade-off, asserted so nobody adopts this as the default
+    by accident: centring the band puts the caption inside the app UI band."""
+    _, bottom = _caption_bar(2, EQUAL_BORDER_CAPTION_Y)
+    assert (overlays.H - bottom) < overlays.PLATFORM_UI_RESERVED_PX
+    # ...which is exactly why it is a per-video override, not the default.
+    _, default_bottom = _caption_bar(2)
+    assert (overlays.H - default_bottom) >= overlays.PLATFORM_UI_RESERVED_PX
+
+
 def test_legacy_caption_position_would_fail_the_safe_zone():
     """Guards the fix: the old value is retained only as documentation."""
     _, bottom = _caption_bar(2, center=overlays.CAPTION_CENTER_Y_LEGACY)
