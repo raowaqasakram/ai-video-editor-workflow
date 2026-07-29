@@ -55,6 +55,15 @@ SHARE_CROP = (1022, 410, 248, 116)      # w, h, x, y
 #   camera PIP (speaker) box on the LEFT in screen-share mode (measured):
 FACE_PIP_CROP = (232, 158, 8, 282)      # w, h, x, y
 
+# Every crop constant above (and FACE_FG_CROP below) is an ABSOLUTE pixel box
+# measured on a 1280x720 StreamYard recording. From the 25 June 2026 stream on,
+# StreamYard records at 1920x1080, where those same coordinates would crop a
+# completely wrong region — the face crop would land on his shoulder. The layout
+# is proportionally identical at both sizes, so the boxes are scaled by the
+# source's height ratio at render time. 720p sources yield exactly 1.0 and render
+# byte-identically to everything shipped before.
+LAYOUT_SRC_H = 720
+
 # Stacked layout: shared screen on TOP, speaker camera BELOW (user's spec), so
 # both are visible. Both sit in branded rounded windows.
 #
@@ -116,9 +125,9 @@ BACKGROUNDS = {"blur": FACE_BG, "white": FACE_BG_WHITE}
 BACKGROUND_CAPTION_THEME = {"blur": "dark", "white": "light"}
 FACE_SHARPEN = "unsharp=5:5:0.4"    # the colour half of the old FACE_ENH is now measured
 
-# Colour is measured through the shipping crop, so the analysis sees the same
-# pixels the viewer will (not the StreamYard banner we crop away).
-GRADE_PRE_FILTER = "crop=" + FACE_FG_CROP
+# Colour is measured through the shipping crop (scaled to the source, like every
+# other crop here), so the analysis sees the same pixels the viewer will — not the
+# StreamYard banner we crop away.
 GRADE_SAMPLE_SECONDS = 20.0         # enough to characterise the lighting, cheap to read
 
 # Camera segments keep the blurred-fit framing — the shipped look, and the only
@@ -137,10 +146,37 @@ TITLE = "Sr. Software Engineer | Mentor"
 # ---------------------------------------------------------------------------
 # Screen-share detection
 # ---------------------------------------------------------------------------
+def src_scale(video):
+    """Factor to map the measured 720p crop boxes onto this source's pixels."""
+    v, _ = encode.streams(video)
+    h = int(v.get("height") or LAYOUT_SRC_H)
+    return h / float(LAYOUT_SRC_H)
+
+
+def scale_crop(crop, k):
+    """Scale a (w, h, x, y) box by `k`, keeping w/h even for yuv420p."""
+    w, h, x, y = crop
+    return (int(round(w * k)) & ~1, int(round(h * k)) & ~1,
+            int(round(x * k)), int(round(y * k)))
+
+
+# How blue the top-left corner must be to count as the StreamYard brand backdrop
+# rather than the room. Measured B-R in that corner:
+#
+#   17 Jul 2026 camera  -11   |  25 Jun 2026 camera   ~40  |  screen share  110-126
+#
+# The original bound of 25 was set against the 17 Jul stream, where the corner is
+# not blue at all. It misfires on the 25 Jun stream, whose grey-lavender wall
+# reads ~40 — every camera frame was being detected as a screen share. 70 sits in
+# the wide empty gap between the room and the brand backdrop.
+SHARE_CORNER_BLUE = 70
+
+
 def _corner_is_share(thumb):
     """True if this small RGB frame is a StreamYard screen-share layout."""
     tl = thumb[0:60, 0:90].astype(np.float32)
-    return (tl[:, :, 2].mean() - tl[:, :, 0].mean()) > 25 and tl[:, :, 1].mean() > 120
+    return ((tl[:, :, 2].mean() - tl[:, :, 0].mean()) > SHARE_CORNER_BLUE
+            and tl[:, :, 1].mean() > 120)
 
 
 def detect_share_segments(video, fps=10, min_len=3.0):
@@ -194,17 +230,28 @@ def _well(img, d, x, y, w, h):
     d.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=RADIUS, fill=(6, 9, 13, 255))
 
 
-def _brand_bg(path):
-    img = Image.new("RGBA", (W, H), BG)
-    # subtle vertical gradient (a touch lighter through the middle)
-    grad = np.linspace(-8, 10, H, dtype=np.float32)
-    arr = np.asarray(img).astype(np.float32)
-    arr[..., :3] += grad[:, None, None]
-    img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+def _brand_bg(path, background="blur"):
+    """Ground for the stacked screen-share layout.
+
+    It must follow the same fill as the camera segments. With
+    `background="white"` the captions are dark ink with no plate, and on the dark
+    brand ground they were all but invisible — a bug that could only appear on a
+    clip that has BOTH the white fill and a screen share (Q7 shipped white with no
+    share, so it never surfaced).
+    """
+    white = background == "white"
+    img = Image.new("RGBA", (W, H), (255, 255, 255, 255) if white else BG)
+    if not white:
+        # subtle vertical gradient (a touch lighter through the middle)
+        grad = np.linspace(-8, 10, H, dtype=np.float32)
+        arr = np.asarray(img).astype(np.float32)
+        arr[..., :3] += grad[:, None, None]
+        img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
     d = ImageDraw.Draw(img)
 
-    # top accent hairline
-    d.rectangle([0, 0, W, 5], fill=ACCENT)
+    # top accent hairline (skipped on white — it reads as a stray blue line)
+    if not white:
+        d.rectangle([0, 0, W, 5], fill=ACCENT)
 
     # two windows: shared screen on top, speaker camera below
     _well(img, d, SCREEN_X, SCREEN_Y, SCREEN_W, SCREEN_H)
@@ -253,7 +300,23 @@ def _out_scale(p):
     return "" if (p["w"], p["h"]) == (W, H) else ",scale=%d:%d" % (p["w"], p["h"])
 
 
-def _encode_face(video, start, dur, out, p, grade_vf, bg="blur", seam=None):
+def face_crop_for(k=1.0, face_crop=None):
+    """The source-pixel crop the camera band is taken from.
+
+    `face_crop` overrides the measured default verbatim (already in this source's
+    own pixels, so it is NOT scaled by `k`). It exists because the default is only
+    right while the speaker is centred in frame: on the 25 June 2026 stream he sits
+    left of centre and closer to the camera, so the scaled default framed his
+    shoulder and pulled in the StreamYard asker pill.
+    """
+    if face_crop:
+        return face_crop if isinstance(face_crop, str) else "%d:%d:%d:%d" % tuple(face_crop)
+    return "%d:%d:%d:%d" % scale_crop(
+        tuple(int(n) for n in FACE_FG_CROP.split(":")), k)
+
+
+def _encode_face(video, start, dur, out, p, grade_vf, bg="blur", seam=None, k=1.0,
+                 face_crop=None):
     """Fit framing: sharp crop over a fill (blurred room, or solid white).
 
     Horizontally centred, vertically lifted so the band's bottom edge meets the
@@ -266,9 +329,10 @@ def _encode_face(video, start, dur, out, p, grade_vf, bg="blur", seam=None):
     else:
         background = FACE_BG_CHEAP if p["cheap_filters"] else BACKGROUNDS[bg]
     seam = FACE_SEAM_Y if seam is None else int(seam)
+    fg_crop = face_crop_for(k, face_crop)
     vf = (f"[0:v]split[bg0][fg0];"
           f"[bg0]{background}[bg];"
-          f"[fg0]crop={FACE_FG_CROP},scale={W}:-1,{enhance}[fg];"
+          f"[fg0]crop={fg_crop},scale={W}:-2,{enhance}[fg];"
           f"[bg][fg]overlay=(W-w)/2:{seam}-h{_out_scale(p)},format=yuv420p[o]")
     encode.run(["ffmpeg", "-y", "-ss", f"{start}", "-t", f"{dur}", "-i", video,
                 "-filter_complex", vf, "-map", "[o]", "-t", f"{dur}", "-an"]
@@ -276,15 +340,15 @@ def _encode_face(video, start, dur, out, p, grade_vf, bg="blur", seam=None):
     return out
 
 
-def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out, p, grade_vf):
+def _encode_share(video, start, dur, bg_png, smask_png, fmask_png, out, p, grade_vf, k=1.0):
     """Stacked framing: whole shared screen on top, camera PIP below.
 
     The measured grade is applied to the camera PIP only — the shared screen is
     left exactly as captured so code and slides stay legible.
     """
-    sw, sh, sx, sy = SHARE_CROP
-    fw, fh, fx, fy = FACE_PIP_CROP
-    pip_enhance = ",".join(f for f in (grade_vf, "unsharp=5:5:0.6") if f)
+    sw, sh, sx, sy = scale_crop(SHARE_CROP, k)
+    fw, fh, fx, fy = scale_crop(FACE_PIP_CROP, k)
+    pip_enhance =",".join(f for f in (grade_vf, "unsharp=5:5:0.6") if f)
     # setpts reset is essential: the seeked video carries a large PTS while the
     # looped PNGs sit at PTS 0, so overlay would never sync them otherwise.
     # The masks are `-loop 1` (infinite) so the OUTPUT `-t {dur}` is what stops it.
@@ -317,7 +381,7 @@ def _build_timeline(shares, dur_total):
     return timeline
 
 
-def _measure_grade(video, timeline, workdir, enabled):
+def _measure_grade(video, timeline, workdir, enabled, k=1.0, face_crop=None):
     """Measure the colour correction once, on camera footage, for the whole body.
 
     Measuring per segment would make the grade drift visibly across cuts, so we
@@ -330,11 +394,10 @@ def _measure_grade(video, timeline, workdir, enabled):
     face = next((sp for sp in timeline if sp[2] == "face"), None)
     if face is not None:
         start, end = face[0], face[1]
-        pre = GRADE_PRE_FILTER
+        pre = "crop=" + face_crop_for(k, face_crop)
     else:
         start, end = timeline[0][0], timeline[0][1]
-        fw, fh, fx, fy = FACE_PIP_CROP
-        pre = "crop=%d:%d:%d:%d" % (fw, fh, fx, fy)
+        pre = "crop=%d:%d:%d:%d" % scale_crop(FACE_PIP_CROP, k)
     window = min(GRADE_SAMPLE_SECONDS, max(1.0, end - start))
     return grade.auto_filter(video, start=start, dur=window, pre_filter=pre,
                              cache_dir=workdir)
@@ -342,7 +405,7 @@ def _measure_grade(video, timeline, workdir, enabled):
 
 def render(video, out, shares=None, workdir=None, quality="final",
            orientation="vertical", auto_grade=True, workers=WORKERS,
-           background="blur", caption_y=None):
+           background="blur", caption_y=None, face_crop=None):
     """Build the screen-share-aware vertical for `video` -> `out`.
 
     Args:
@@ -358,6 +421,9 @@ def render(video, out, shares=None, workdir=None, quality="final",
         caption_y: the caption centre this body will be captioned at. The seam is
             derived from it, so the footage band always ends exactly where the
             caption starts. None = overlays.CAPTION_CENTER_Y.
+        face_crop: "w:h:x:y" in SOURCE pixels, overriding the measured default for
+            streams where the speaker is not centred in frame. None = the default,
+            scaled to the source resolution.
 
     Camera segments use the blurred-fit framing; screen-share segments use the
     stacked layout, so the shared screen stays legible.
@@ -380,13 +446,19 @@ def render(video, out, shares=None, workdir=None, quality="final",
         shares = detect_share_segments(video)
     print("screen-share segments:", sorted(shares))
 
+    k = src_scale(video)
+    if k != 1.0:
+        print("source is %.2fx the 1280x720 layout canvas — crops scaled to match" % k)
+
+    print("camera crop: %s (source pixels)" % face_crop_for(k, face_crop))
+
     timeline = _build_timeline(shares, dur_total)
-    grade_vf = _measure_grade(video, timeline, workdir, auto_grade)
+    grade_vf = _measure_grade(video, timeline, workdir, auto_grade, k, face_crop)
 
     bg_png = os.path.join(workdir, "share_bg.png")
     smask_png = os.path.join(workdir, "screen_mask.png")
     fmask_png = os.path.join(workdir, "face_mask.png")
-    _brand_bg(bg_png)
+    _brand_bg(bg_png, background)
     _rounded_mask(smask_png, SCREEN_W, SCREEN_H)
     _rounded_mask(fmask_png, FACE_W, FACE_H)
 
@@ -397,9 +469,9 @@ def render(video, out, shares=None, workdir=None, quality="final",
         dur = round(e - s, 3)
         print(f"  [{kind}] {s:.2f}-{e:.2f}s ({dur:.2f}s) -> {os.path.basename(seg)}")
         if kind == "face":
-            jobs.append((video, s, dur, seg, p, grade_vf, background, seam))
+            jobs.append((video, s, dur, seg, p, grade_vf, background, seam, k, face_crop))
         else:
-            jobs.append((video, s, dur, bg_png, smask_png, fmask_png, seg, p, grade_vf))
+            jobs.append((video, s, dur, bg_png, smask_png, fmask_png, seg, p, grade_vf, k))
         parts.append(seg)
 
     face_jobs = [j for j, sp in zip(jobs, timeline) if sp[2] == "face"]

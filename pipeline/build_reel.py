@@ -156,7 +156,7 @@ def _outro_part(outro, p):
 def build(body, out_dir, question, asker, name, title,
           caps=None, outro=None, out_name="REEL.mp4", tech=None,
           quality="final", orientation="vertical", denoise=False,
-          caption_y=None, caption_theme="dark"):
+          caption_y=None, caption_theme="dark", card_design=0):
     """Assemble the finished reel and return its path.
 
     Args:
@@ -175,6 +175,8 @@ def build(body, out_dir, question, asker, name, title,
             band — only override with a value that still clears it.
         caption_theme: "dark" (white text on a dark plate) or "light" (dark text,
             no plate) — the latter belongs with the white-fill framing.
+        card_design: index or name into overlays.CARD_DESIGNS. Questions rotate
+            through the pool so consecutive reels do not open identically.
     """
     os.makedirs(out_dir, exist_ok=True)
     work = os.path.join(out_dir, "_reel_work")
@@ -193,7 +195,7 @@ def build(body, out_dir, question, asker, name, title,
 
     card_png = os.path.join(out_dir, "question_card.png")
     lt_png = os.path.join(out_dir, "name_tag.png")
-    ro.make_question_card(question, asker, card_png)
+    ro.make_question_card(question, asker, card_png, card_design)
     ro.make_lower_third(name, title, lt_png)
 
     bdur = dur(body)

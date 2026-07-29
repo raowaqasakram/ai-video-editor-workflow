@@ -7,7 +7,7 @@ Produces transparent PNGs composited later with ffmpeg `overlay`:
 
 Uses SF (San Francisco) for a premium/Apple feel, falling back to Arial.
 """
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 1080, 1920
 ACCENT = (0, 174, 239, 255)      # #00AEEF
@@ -53,47 +53,233 @@ def rounded(draw, box, r, fill):
     draw.rounded_rectangle(box, radius=r, fill=fill)
 
 
-def make_question_card(question, handle, out):
-    """Render the premium 'Viewer Question' intro card."""
-    img = Image.new("RGBA", (W, H), BG)
-    d = ImageDraw.Draw(img)
-    # subtle accent glow bar at top and bottom
+FOOTER = "Rao Waqas Akram  •  Sr. Software Engineer | Mentor"
+CARD_LABEL = "VIEWER QUESTION"
+
+
+def fit_lines(d, text, max_w, max_lines=5, sizes=(76, 70, 64, 58, 52, 46), weight="Bold"):
+    """Largest font from `sizes` whose wrap fits in `max_lines`. Returns (font, lines).
+
+    Question length varies a lot between viewers — a fixed size either overflows
+    the card on a long question or wastes the canvas on a short one.
+    """
+    for s in sizes:
+        f = font(s, weight)
+        lines = wrap(d, text, f, max_w)
+        if len(lines) <= max_lines:
+            return f, lines, s
+    f = font(sizes[-1], weight)
+    return f, wrap(d, text, f, max_w)[:max_lines], sizes[-1]
+
+
+def _gradient(size, top, bottom, horizontal=False):
+    """Vertical (or horizontal) two-stop gradient as an RGBA image."""
+    w, h = size
+    n = w if horizontal else h
+    ramp = Image.new("RGBA", (1, n))
+    px = ramp.load()
+    for i in range(n):
+        t = i / max(1, n - 1)
+        px[0, i] = tuple(int(top[c] + (bottom[c] - top[c]) * t) for c in range(4))
+    if horizontal:
+        ramp = ramp.rotate(-90, expand=True)
+    return ramp.resize((w, h))
+
+
+def _glow(img, cx, cy, r, colour, alpha=110):
+    """Soft radial accent bloom, composited under the text."""
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(layer).ellipse([cx - r, cy - r, cx + r, cy + r],
+                                  fill=colour[:3] + (alpha,))
+    img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(r * 0.45)))
+
+
+def _footer(d, colour=(150, 160, 170, 255), y=H - 150):
+    f = font(34, "Semibold")
+    d.text(((W - d.textlength(FOOTER, font=f)) / 2, y), FOOTER, font=f, fill=colour)
+
+
+def _card_classic(img, d, question, handle):
+    """D0 — the original: accent rules, big quote glyph, left-aligned question."""
     d.rectangle([0, 0, W, 10], fill=ACCENT)
     d.rectangle([0, H - 10, W, H], fill=(ACCENT[0], ACCENT[1], ACCENT[2], 120))
 
     margin = 110
-    # Label pill
-    label = "VIEWER QUESTION"
     lf = font(40, "Heavy")
-    lw = d.textlength(label, font=lf)
-    pill = [margin, 470, margin + lw + 70, 470 + 78]
-    rounded(d, pill, 39, ACCENT)
-    d.text((margin + 35, 470 + 18), label, font=lf, fill=(8, 12, 16, 255))
+    lw = d.textlength(CARD_LABEL, font=lf)
+    rounded(d, [margin, 470, margin + lw + 70, 470 + 78], 39, ACCENT)
+    d.text((margin + 35, 470 + 18), CARD_LABEL, font=lf, fill=(8, 12, 16, 255))
 
-    # Big quotation mark
-    qf = font(220, "Heavy")
-    d.text((margin - 12, 560), "“", font=qf, fill=(ACCENT[0], ACCENT[1], ACCENT[2], 90))
+    d.text((margin - 12, 560), "“", font=font(220, "Heavy"),
+           fill=(ACCENT[0], ACCENT[1], ACCENT[2], 90))
 
-    # Question text
-    tf = font(70, "Bold")
-    lines = wrap(d, question, tf, W - 2 * margin)
+    tf, lines, size = fit_lines(d, question, W - 2 * margin, max_lines=6)
     y = 720
     for ln in lines:
         d.text((margin, y), ln, font=tf, fill=WHITE)
-        y += 92
+        y += int(size * 1.31)
+    d.text((margin, y + 40), handle, font=font(42, "Semibold"), fill=SECONDARY)
+    _footer(d)
+    return len(lines)
 
-    # Asker handle
-    hf = font(42, "Semibold")
-    d.text((margin, y + 40), handle, font=hf, fill=SECONDARY)
 
-    # Footer brand
-    ff = font(34, "Semibold")
-    foot = "Rao Waqas Akram  •  Sr. Software Engineer | Mentor"
-    fw = d.textlength(foot, font=ff)
-    d.text(((W - fw) / 2, H - 150), foot, font=ff, fill=(150, 160, 170, 255))
+def _card_spotlight(img, d, question, handle):
+    """D1 — centred, with an accent bloom behind the text."""
+    _glow(img, W // 2, 900, 560, ACCENT, alpha=120)
 
-    img.save(out)
-    print("card ->", out, f"({len(lines)} lines)")
+    lf = font(38, "Heavy")
+    lw = d.textlength(CARD_LABEL, font=lf)
+    lx = (W - lw) / 2
+    d.text((lx, 520), CARD_LABEL, font=lf, fill=ACCENT)
+    rule_y = 520 + 22
+    d.rectangle([lx - 130, rule_y, lx - 40, rule_y + 3], fill=(ACCENT[0], ACCENT[1], ACCENT[2], 140))
+    d.rectangle([lx + lw + 40, rule_y, lx + lw + 130, rule_y + 3], fill=(ACCENT[0], ACCENT[1], ACCENT[2], 140))
+
+    margin = 120
+    tf, lines, size = fit_lines(d, question, W - 2 * margin, max_lines=6)
+    step = int(size * 1.30)
+    y = 900 - (len(lines) * step) // 2
+    for ln in lines:
+        d.text(((W - d.textlength(ln, font=tf)) / 2, y), ln, font=tf, fill=WHITE)
+        y += step
+
+    hf = font(40, "Semibold")
+    hw = d.textlength(handle, font=hf)
+    pill = [(W - hw) / 2 - 38, y + 56, (W + hw) / 2 + 38, y + 56 + 76]
+    rounded(d, pill, 38, (255, 255, 255, 26))
+    d.text(((W - hw) / 2, y + 74), handle, font=hf, fill=SECONDARY)
+    _footer(d)
+    return len(lines)
+
+
+def _card_panel(img, d, question, handle):
+    """D2 — a raised panel floating on a gradient ground."""
+    img.alpha_composite(_gradient((W, H), (13, 18, 25, 255), (8, 11, 15, 255)))
+
+    margin, top, bottom = 84, 430, 1420
+    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(panel)
+    pd.rounded_rectangle([margin, top, W - margin, bottom], radius=44, fill=(24, 31, 40, 255))
+    img.alpha_composite(panel)
+    # accent cap on the panel's top edge
+    cap = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(cap).rounded_rectangle([margin, top, W - margin, top + 44],
+                                          radius=44, fill=ACCENT)
+    ImageDraw.Draw(cap).rectangle([margin, top + 22, W - margin, top + 44], fill=ACCENT)
+    img.alpha_composite(cap)
+
+    inner = margin + 56
+    lf = font(36, "Heavy")
+    d.text((inner, top + 96), CARD_LABEL, font=lf, fill=ACCENT)
+
+    tf, lines, size = fit_lines(d, question, W - 2 * inner, max_lines=6)
+    y = top + 200
+    for ln in lines:
+        d.text((inner, y), ln, font=tf, fill=WHITE)
+        y += int(size * 1.30)
+
+    d.rectangle([inner, bottom - 150, W - inner, bottom - 148], fill=(255, 255, 255, 34))
+    d.text((inner, bottom - 116), handle, font=font(40, "Semibold"), fill=SECONDARY)
+    _footer(d)
+    return len(lines)
+
+
+def _card_editorial(img, d, question, handle):
+    """D3 — left accent rule, oversized type, watermark glyph."""
+    # Watermark sits above the footer band — at full height it collided with it.
+    d.text((W - 320, 1120), "?", font=font(420, "Heavy"), fill=(255, 255, 255, 11))
+
+    margin = 132
+    tf, lines, size = fit_lines(d, question, W - margin - 110, max_lines=6)
+    step = int(size * 1.28)
+    block_h = len(lines) * step
+    y0 = 880 - block_h // 2
+
+    d.rectangle([margin - 42, y0 - 96, margin - 28, y0 + block_h + 30], fill=ACCENT)
+    d.text((margin, y0 - 92), CARD_LABEL, font=font(36, "Heavy"), fill=ACCENT)
+
+    y = y0
+    for ln in lines:
+        d.text((margin, y), ln, font=tf, fill=WHITE)
+        y += step
+
+    d.rectangle([margin, y + 60, margin + 90, y + 63], fill=(255, 255, 255, 60))
+    d.text((margin, y + 96), handle, font=font(40, "Semibold"), fill=SECONDARY)
+    _footer(d)
+    return len(lines)
+
+
+def _card_banner(img, d, question, handle):
+    """D4 — accent masthead across the top, question on the dark field below."""
+    band_h = 470
+    img.alpha_composite(_gradient((W, band_h), (0, 174, 239, 255), (0, 132, 190, 255)))
+
+    lf = font(44, "Heavy")
+    d.text(((W - d.textlength(CARD_LABEL, font=lf)) / 2, 208), CARD_LABEL,
+           font=lf, fill=(6, 20, 28, 255))
+    hf = font(38, "Semibold")
+    d.text(((W - d.textlength(handle, font=hf)) / 2, 288), handle,
+           font=hf, fill=(9, 46, 64, 230))
+
+    d.text((92, band_h + 34), "“", font=font(200, "Heavy"),
+           fill=(ACCENT[0], ACCENT[1], ACCENT[2], 80))
+
+    margin = 118
+    tf, lines, size = fit_lines(d, question, W - 2 * margin, max_lines=6)
+    y = band_h + 250
+    for ln in lines:
+        d.text((margin, y), ln, font=tf, fill=WHITE)
+        y += int(size * 1.30)
+
+    d.rectangle([0, H - 10, W, H], fill=ACCENT)
+    _footer(d)
+    return len(lines)
+
+
+# Round-robin pool. Index 0 is the original card, so anything already shipped
+# re-renders identically; each following question picks the next design.
+CARD_DESIGNS = [
+    ("classic", _card_classic),
+    ("spotlight", _card_spotlight),
+    ("panel", _card_panel),
+    ("editorial", _card_editorial),
+    ("banner", _card_banner),
+]
+
+
+def card_design_for(n):
+    """Round-robin design index for question number `n` (Q1 -> 0, Q6 -> 0)."""
+    return (int(n) - 1) % len(CARD_DESIGNS)
+
+
+def make_question_card(question, handle, out, design=0):
+    """Render the 'Viewer Question' intro card in one of CARD_DESIGNS.
+
+    `design` is an index or a name; out of range wraps, so a question number can
+    be passed straight through card_design_for().
+    """
+    if isinstance(design, str):
+        names = [n for n, _ in CARD_DESIGNS]
+        if design not in names:
+            raise KeyError("unknown card design %r (have %s)" % (design, ", ".join(names)))
+        idx = names.index(design)
+    else:
+        idx = int(design or 0) % len(CARD_DESIGNS)
+    name, render = CARD_DESIGNS[idx]
+
+    img = Image.new("RGBA", (W, H), BG)
+    d = ImageDraw.Draw(img)
+    n_lines = render(img, d, question, handle)
+
+    # ImageDraw REPLACES pixels rather than blending them, so every element drawn
+    # with alpha < 255 (watermarks, hairline rules, the quote glyph) leaves a
+    # translucent hole instead of a tint — and ffmpeg then drops the alpha, which
+    # renders those elements at FULL strength. Flattening onto the card's own
+    # background resolves them at the intended opacity, and shipping an opaque RGB
+    # PNG means nothing downstream has to interpret alpha at all.
+    img = Image.alpha_composite(Image.new("RGBA", (W, H), BG), img)
+    img.convert("RGB").save(out)
+    print("card ->", out, f"({name} design, {n_lines} lines)")
 
 
 def make_lower_third(name, title, out):

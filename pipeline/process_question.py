@@ -16,6 +16,11 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "asker":     "@handle",
   "name":      "Rao Waqas Akram",              # optional (defaults)
   "title":     "Sr. Software Engineer | Mentor", # optional
+  "speed":     1.35,          # reel playback speed; dead-air cut + speed happen in
+                              # ONE encode. captions/tech are authored in the RAW
+                              # clip's timebase and remapped onto it automatically.
+  "trim_silence": true,       # remove dead air (spans located from captions.json,
+                              # falling back to words.json)
   "shares":    null,          # null = auto-detect; or [[start,end], ...]
   "captions":  "captions.json", # file path | inline [[s,e,txt,[hl]]] | null
   "tech":      "tech.json",   # on-screen tech chips: file | "auto" (from captions)
@@ -26,7 +31,14 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "denoise":      false,      # gentle noise reduction — only for rough audio
   "caption_y":    null,       # null = the safe default (overlays.CAPTION_CENTER_Y)
   "background":   "blur",     # fill around the footage band: "blur" | "white"
-  "caption_theme": null       # null = whatever the background implies
+  "caption_theme": null,      # null = whatever the background implies
+  "face_crop":    null,       # "w:h:x:y" in SOURCE pixels; null = the measured
+                              # default, scaled to the source resolution. Set it
+                              # when the speaker is not centred in frame.
+  "card_design":  null        # intro-card design: index or name from
+                              # overlays.CARD_DESIGNS. null = round-robin on the
+                              # Q<N> folder number (classic, spotlight, panel,
+                              # editorial, banner, then repeat).
 }
 
 Re-runs are cheap: the heavy body render is cached (delete _body.mp4 or pass
@@ -42,11 +54,14 @@ Flags:
 """
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_reel as br  # noqa: E402
 import encode  # noqa: E402
+import overlays as ro  # noqa: E402
+import silence  # noqa: E402
 import screenshare_vertical as ssv  # noqa: E402
 import verify_reel as qc  # noqa: E402
 
@@ -67,11 +82,15 @@ TEMPLATE = {
     "outro": None,
     "out_name": "REEL.mp4",
     # render options (safe defaults — see the module docstring):
+    "speed": 1.35,
+    "trim_silence": True,
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
     "background": "blur",
     "caption_theme": None,
+    "face_crop": None,
+    "card_design": None,
     # upload metadata (ALWAYS filled — catchy title + description + hashtags):
     "video_title": "CATCHY TITLE UNDER 70 CHARS",
     "thumbnail_title": "SHORT PUNCHY THUMBNAIL TEXT",
@@ -134,6 +153,66 @@ def _write_metadata(cfg, out_dir, reel_path):
     print(f"metadata files written -> {out_dir}")
 
 
+def _speech_spans(out_dir, cfg):
+    """Word-shaped spans of KNOWN speech, for the dead-air pass.
+
+    Prefers `captions.json` over `words.json`: the captions are the hand-verified
+    record of where speech actually is, while Whisper's words claim continuous
+    speech wherever it hallucinated a repetition loop — which is exactly where the
+    longest silences tend to be.
+    """
+    caps = cfg.get("captions")
+    if isinstance(caps, str) and caps != "auto":
+        p = caps if os.path.isabs(caps) else os.path.join(out_dir, caps)
+        if os.path.exists(p):
+            data = json.load(open(p))
+            return [{"start": float(c[0]), "end": float(c[1]), "word": ""} for c in data]
+    elif isinstance(caps, list):
+        return [{"start": float(c[0]), "end": float(c[1]), "word": ""} for c in caps]
+    words = os.path.join(out_dir, "words.json")
+    if os.path.exists(words):
+        return json.load(open(words))
+    return []
+
+
+def _prepare_source(clip, out_dir, cfg, suffix, force):
+    """Cut dead air and apply the reel speed in one encode. Returns
+    (source_path, keeps, speed) — keeps/speed are what map authored times onto it."""
+    speed = float(cfg.get("speed") or 1.0)
+    trim = cfg.get("trim_silence", True)
+    if speed == 1.0 and not trim:
+        return clip, None, 1.0
+
+    spans = _speech_spans(out_dir, cfg)
+    if trim and not spans:
+        print("note: no captions.json/words.json to locate dead air — speed only.")
+    keeps = (silence.keep_ranges(spans, encode.duration(clip))
+             if (trim and spans) else None)
+
+    out = os.path.join(out_dir, f"_source{suffix}.mp4")
+    if force or not os.path.exists(out):
+        ranges = keeps or [[0.0, encode.duration(clip)]]
+        if keeps:
+            cut = encode.duration(clip) - sum(e - s for s, e in keeps)
+            print("dead air: removing %.2fs over %d span(s)" % (cut, len(keeps) - 1))
+        silence.apply(clip, ranges, out, speed=speed)
+    else:
+        print(f"prepared source cached -> {out} (pass --force to rebuild)")
+    print("source: %.2fs -> %.2fs at %.2fx" % (encode.duration(clip),
+                                               encode.duration(out), speed))
+    return out, keeps, speed
+
+
+def _retime(timeline, keeps, speed):
+    """Move an authored timeline from the raw clip onto the prepared source."""
+    if timeline is None or not isinstance(timeline, list):
+        return timeline
+    out = silence.remap_captions(timeline, keeps) if keeps else [list(c) for c in timeline]
+    if speed != 1.0:
+        out = [[round(c[0] / speed, 2), round(c[1] / speed, 2)] + list(c[2:]) for c in out]
+    return out
+
+
 def process(clip, out_dir, force=False, quality="final", verify=True):
     """Build one question end to end. Returns the reel path, or None if a config
     template was just written and there is nothing to build yet."""
@@ -153,14 +232,21 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
     caption_theme = (cfg.get("caption_theme")
                      or ssv.BACKGROUND_CAPTION_THEME[background])
 
+    # 0) prepare the source: cut dead air and apply the reel speed, in ONE encode.
+    #    `captions`/`tech` are authored in the RAW clip's timebase; this step
+    #    returns the mapping needed to move them onto the prepared source, so the
+    #    speed stays a knob instead of something baked into hand-authored timings.
+    suffix = "" if quality == "final" else f".{quality}"
+    clip, keeps, speed = _prepare_source(clip, out_dir, cfg, suffix, force)
+
     # 1) body (screen-share-aware, cached). Cheap-quality bodies are cached under
     #    their own name so an iteration pass can never overwrite the shipping one.
-    suffix = "" if quality == "final" else f".{quality}"
     body = os.path.join(out_dir, f"_body{suffix}.mp4")
     if force or not os.path.exists(body):
         ssv.render(clip, body, shares=cfg.get("shares"), quality=quality,
                    auto_grade=cfg.get("auto_grade", True),
-                   background=background, caption_y=caption_y)
+                   background=background, caption_y=caption_y,
+                   face_crop=cfg.get("face_crop"))
     else:
         print(f"body cached -> {body} (pass --force to rebuild)")
 
@@ -176,8 +262,18 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         print(f"note: {key} file '{p}' not found — building without it.")
         return None
 
-    caps = _timeline("captions")
-    tech = _timeline("tech")
+    # Authored in the RAW clip's timebase, then moved onto the prepared source.
+    caps = _retime(_timeline("captions"), keeps, speed)
+    tech = _retime(_timeline("tech"), keeps, speed)
+
+    # The intro card rotates through overlays.CARD_DESIGNS so a viewer bingeing
+    # the series does not see the same opening five times. Explicit config wins;
+    # otherwise the design follows the Q<N> folder number, which makes the
+    # rotation automatic and stable across re-runs.
+    card_design = cfg.get("card_design")
+    if card_design is None:
+        m = re.search(r"\d+", os.path.basename(out_dir.rstrip("/")))
+        card_design = ro.card_design_for(m.group()) if m else 0
 
     # 3) assemble card -> body -> captions + tech chips -> outro, master the audio
     reel = br.build(
@@ -189,7 +285,8 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         out_name=cfg.get("out_name", "REEL.mp4"),
         quality=quality,
         denoise=cfg.get("denoise", False),
-        caption_y=caption_y, caption_theme=caption_theme)
+        caption_y=caption_y, caption_theme=caption_theme,
+        card_design=card_design)
 
     # 4) upload deliverables (title/description/hashtags/metadata) — always
     _write_metadata(cfg, out_dir, reel)

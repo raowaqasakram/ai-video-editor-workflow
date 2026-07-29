@@ -55,6 +55,54 @@ Per-video creative inputs: `config.json` fields + `captions.json`.
 to `<out_name>.draft.mp4` so it can never overwrite the real file), `--preview`,
 `--force` (rebuild the cached body), `--no-verify` (skip QC).
 
+### Pacing: dead-air trim + reel speed (one encode)
+
+Reels ship **sped up**, with the dead air cut. Both are `config.json` fields and both
+happen in a **single** encode (`silence.apply(speed=)`) that produces a cached
+`_source.mp4`, so they cost one generation rather than two:
+
+```jsonc
+"speed": 1.35,          // standing default; he has changed it (1.5 -> 1.4 -> 1.35)
+"trim_silence": true    // dead-air spans located from captions.json, else words.json
+```
+
+**`captions.json` and `tech.json` are authored in the RAW clip's timebase.** The
+pipeline remaps them through the cut and divides by `speed`. That invariant is what
+makes the speed a knob — otherwise every speed change means re-timing captions by hand.
+
+Keep-ranges prefer `captions.json` over `words.json`, because the captions are the
+verified record of where speech is; Whisper claims continuous speech wherever it
+hallucinates a repetition loop, which is often exactly where the longest silence sits.
+
+⚠️ In any speed pass `-t` must come **before** `-i`. After `-i` it bounds the *output*,
+so ffmpeg reads `duration × speed` of input to fill it and every segment comes out
+full-length holding the wrong footage — silently. Assert output durations.
+
+### Framing knobs for a new stream
+
+```jsonc
+"face_crop": "746:776:0:0",  // SOURCE pixels; null = measured default, scaled
+"background": "white",       // ALWAYS white unless told otherwise
+"caption_y": 1549,           // see below
+"card_design": null          // null = round-robin on the Q<N> folder number
+```
+
+- Crop constants were measured on **1280×720**. From the 25 June 2026 stream StreamYard
+  records **1920×1080**, so they are scaled by source height (720p → exactly 1.0, so
+  older clips re-render identically). Scaling is not always enough: set `face_crop`
+  when the speaker is not centred in frame, and check it clears the StreamYard asker
+  pill.
+- Screen-share detection needs the corner to be genuinely brand-blue
+  (`SHARE_CORNER_BLUE = 70`). At the old bound of 25 a grey-lavender wall read as a
+  share and shattered the body into alternating segments.
+- **`caption_y` balances VISIBLE white, not the band on the canvas.** The caption text
+  sits in the bottom band and eats it, so a canvas-centred band looks top-heavy
+  (398px above vs ~211px below on Q2). Solve `seam - band_h == 1920 - ink_bottom` and
+  confirm on a rendered frame.
+- Intro cards rotate through `overlays.CARD_DESIGNS`
+  (`classic, spotlight, panel, editorial, banner`) so consecutive reels do not open
+  identically. Index 0 is the original card.
+
 ### The encode path (this is what decides output quality)
 
 ```

@@ -127,12 +127,20 @@ def report(clip, words, min_gap=MIN_GAP, pad=PAD):
     return keeps
 
 
-def apply(clip, keeps, out, crf=TRIM_CRF, workdir=None):
+def apply(clip, keeps, out, crf=TRIM_CRF, workdir=None, speed=1.0):
     """Cut `clip` down to `keeps` and write `out`, with a 30ms fade at each edge.
 
     Re-encodes at CRF 16 — the same quality the manual trim step uses — because
     stream-copying cannot cut on a non-keyframe accurately.
+
+    `speed` > 1 also plays the result faster (`setpts` + pitch-preserving
+    `atempo`). It belongs in THIS pass rather than a separate one: tightening and
+    speeding are both "how long is this clip", and doing them together costs one
+    encode generation instead of two. Times returned by remap_time/remap_captions
+    are in the tightened clip's own timebase, so divide them by `speed` afterwards.
     """
+    if not 0.5 <= speed <= 2.0:
+        raise ValueError("speed %r outside atempo's single-pass range 0.5-2.0" % speed)
     workdir = workdir or os.path.join(os.path.dirname(os.path.abspath(out)), "_tighten_work")
     os.makedirs(workdir, exist_ok=True)
     v, _ = encode.streams(clip)
@@ -141,11 +149,20 @@ def apply(clip, keeps, out, crf=TRIM_CRF, workdir=None):
     parts = []
     for i, (start, end) in enumerate(keeps):
         dur = round(end - start, 3)
+        out_dur = dur / speed
         part = os.path.join(workdir, "keep_%02d.mp4" % i)
-        af = ("afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f"
-              % (FADE, max(0.0, dur - FADE), FADE))
-        encode.run(["ffmpeg", "-y", "-ss", "%.3f" % start, "-i", clip,
-                    "-t", "%.3f" % dur, "-af", af,
+        # atempo first, so the fades stay 30ms in the OUTPUT and still kill the
+        # click at the join rather than being squeezed to 30/speed ms.
+        af = ("atempo=%.6f," % speed if speed != 1.0 else "") + (
+            "afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f"
+            % (FADE, max(0.0, out_dur - FADE), FADE))
+        vf = ["-vf", "setpts=PTS/%.6f" % speed] if speed != 1.0 else []
+        # `-t` goes BEFORE `-i` so it bounds the INPUT. After `-i` it bounds the
+        # OUTPUT, and with setpts speeding the video ffmpeg simply reads
+        # dur*speed seconds of input to fill dur seconds of output — every part
+        # came out full-length and holding the wrong footage.
+        encode.run(["ffmpeg", "-y", "-ss", "%.3f" % start, "-t", "%.3f" % dur,
+                    "-i", clip] + vf + ["-af", af,
                     "-c:v", "libx264", "-crf", crf, "-preset", "medium",
                     "-pix_fmt", "yuv420p", "-r", "%.4f" % fps,
                     "-g", str(encode.GOP), "-keyint_min", str(encode.GOP),
@@ -156,7 +173,8 @@ def apply(clip, keeps, out, crf=TRIM_CRF, workdir=None):
                     "-ac", str(encode.AUDIO_CHANNELS),
                     "-loglevel", "error", part])
         parts.append(part)
-        print("  keep %.2f-%.2f (%.2fs) -> %s" % (start, end, dur, os.path.basename(part)))
+        print("  keep %.2f-%.2f (%.2fs -> %.2fs) -> %s"
+              % (start, end, dur, out_dur, os.path.basename(part)))
 
     if len(parts) == 1:
         encode.run(["ffmpeg", "-y", "-i", parts[0], "-c", "copy",
@@ -178,6 +196,8 @@ if __name__ == "__main__":
     ap.add_argument("--pad", type=float, default=PAD)
     ap.add_argument("--captions", default=None,
                     help="captions.json to remap alongside --apply")
+    ap.add_argument("--speed", type=float, default=1.0,
+                    help="also play the result faster, e.g. 1.4 (0.5-2.0)")
     args = ap.parse_args()
 
     with open(args.words) as fh:
@@ -185,11 +205,14 @@ if __name__ == "__main__":
     keeps = report(args.clip, words, min_gap=args.min_gap, pad=args.pad)
 
     if args.apply:
-        apply(args.clip, keeps, args.apply)
+        apply(args.clip, keeps, args.apply, speed=args.speed)
         if args.captions:
             with open(args.captions) as fh:
                 caps = json.load(fh)
             remapped = remap_captions(caps, keeps)
+            if args.speed != 1.0:
+                remapped = [[round(c[0] / args.speed, 2), round(c[1] / args.speed, 2)]
+                            + list(c[2:]) for c in remapped]
             dest = os.path.splitext(args.captions)[0] + ".tightened.json"
             with open(dest, "w") as fh:
                 json.dump(remapped, fh, ensure_ascii=False, indent=2)
