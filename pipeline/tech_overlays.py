@@ -140,11 +140,213 @@ def _ic_terminal(d, s):
     d.text((s * 0.18, s * 0.34), ">_", font=f, fill=(80, 250, 123, 255))
 
 
+# --- hiring-platform marks -------------------------------------------------
+# Drawn approximations of the platforms he names on camera, in each brand's own
+# colour, so a viewer recognises the site the moment he says it. They are
+# glyphs, not trademark files — recognisable at 76px, which is the whole job.
+def _wordmark(d, s, text, size=0.44, dy=0.24, fill=WHITE):
+    f = ro.font(max(8, int(s * size)), "Heavy")
+    d.text(((s - d.textlength(text, font=f)) / 2, s * dy), text, font=f, fill=fill)
+
+
+def _ic_upwork(d, s):
+    d.ellipse([0, 0, s, s], fill=(20, 168, 0, 255))          # Upwork green
+    _wordmark(d, s, "up", 0.50, 0.20)
+
+
+def _ic_fiverr(d, s):
+    d.rounded_rectangle([0, 0, s, s], radius=s // 5, fill=(29, 191, 115, 255))
+    _wordmark(d, s, "fi", 0.52, 0.18)
+
+
+def _ic_indeed(d, s):
+    # Indeed's mark is the dotted lowercase "i" on deep blue — deliberately NOT
+    # the "in" square, which at chip size is indistinguishable from LinkedIn.
+    d.ellipse([0, 0, s, s], fill=(0, 58, 155, 255))
+    d.rounded_rectangle([s * 0.43, s * 0.40, s * 0.57, s * 0.78], radius=int(s * 0.07),
+                        fill=WHITE)
+    d.ellipse([s * 0.41, s * 0.20, s * 0.59, s * 0.36], fill=WHITE)
+
+
+def _ic_glassdoor(d, s):
+    d.ellipse([0, 0, s, s], fill=(12, 170, 65, 255))         # Glassdoor green
+    d.rounded_rectangle([s * 0.30, s * 0.24, s * 0.70, s * 0.78], radius=int(s * 0.06),
+                        outline=WHITE, width=max(3, int(s * 0.09)))
+    d.ellipse([s * 0.56, s * 0.48, s * 0.66, s * 0.58], fill=WHITE)
+
+
+def _ic_toptal(d, s):
+    c = s / 2
+    d.polygon([(c, s * 0.08), (s * 0.92, c), (c, s * 0.92), (s * 0.08, c)],
+              fill=(32, 78, 207, 255))
+    d.polygon([(c, s * 0.28), (s * 0.74, c), (c, s * 0.72), (s * 0.26, c)], fill=WHITE)
+
+
+def _ic_freelancer(d, s):
+    d.rounded_rectangle([0, 0, s, s], radius=s // 5, fill=(41, 178, 254, 255))
+    d.polygon([(s * 0.24, s * 0.70), (s * 0.62, s * 0.20), (s * 0.72, s * 0.34),
+               (s * 0.40, s * 0.78)], fill=WHITE)
+    d.polygon([(s * 0.46, s * 0.78), (s * 0.78, s * 0.42), (s * 0.82, s * 0.72)],
+              fill=(10, 14, 20, 255))
+
+
+def _ic_remotebase(d, s):
+    d.rounded_rectangle([0, 0, s, s], radius=s // 5, fill=(88, 62, 214, 255))
+    _wordmark(d, s, "RB", 0.44, 0.22)
+
+
+def _ic_turing(d, s):
+    d.rounded_rectangle([0, 0, s, s], radius=s // 5, fill=(16, 18, 24, 255))
+    _wordmark(d, s, "T", 0.62, 0.12)
+
+
+def _ic_andela(d, s):
+    d.ellipse([0, 0, s, s], fill=(0, 143, 138, 255))
+    _wordmark(d, s, "A", 0.58, 0.14)
+
+
+def _ic_globe(d, s):
+    """Remote / worldwide."""
+    c, r = s / 2, s * 0.42
+    w = max(3, int(s * 0.06))
+    d.ellipse([c - r, c - r, c + r, c + r], outline=ACCENT, width=w)
+    d.line([c - r, c, c + r, c], fill=ACCENT, width=w)
+    d.ellipse([c - r * 0.48, c - r, c + r * 0.48, c + r], outline=ACCENT, width=w)
+    d.arc([c - r, c - r * 0.62, c + r, c + r * 0.30], 0, 180, fill=ACCENT, width=w)
+
+
+def _ic_money(d, s):
+    d.ellipse([0, 0, s, s], fill=(46, 190, 116, 255))
+    _wordmark(d, s, "$", 0.62, 0.14)
+
+
+def _ic_clock(d, s):
+    c, r = s / 2, s * 0.42
+    d.ellipse([c - r, c - r, c + r, c + r], fill=WHITE, outline=ACCENT,
+              width=max(3, int(s * 0.06)))
+    w = max(3, int(s * 0.06))
+    d.line([c, c, c, c - r * 0.62], fill=(20, 24, 30, 255), width=w)
+    d.line([c, c, c + r * 0.44, c], fill=ACCENT, width=w)
+
+
+def _ic_search(d, s):
+    c, r = s * 0.44, s * 0.30
+    d.ellipse([c - r, c - r, c + r, c + r], outline=ACCENT, width=max(3, int(s * 0.08)))
+    d.line([c + r * 0.72, c + r * 0.72, s * 0.90, s * 0.90], fill=ACCENT,
+           width=max(4, int(s * 0.10)))
+
+
+def _ic_pages(d, s):
+    """Two stacked sheets — the page-count rule (one-page resume, two-page CV)."""
+    d.rounded_rectangle([s * 0.06, s * 0.10, s * 0.66, s * 0.82], radius=int(s * 0.07),
+                        fill=(150, 162, 176, 255))
+    d.rounded_rectangle([s * 0.30, s * 0.22, s * 0.94, s * 0.94], radius=int(s * 0.07),
+                        fill=WHITE)
+    for i, w in enumerate((0.46, 0.34, 0.42)):
+        y = s * (0.38 + i * 0.16)
+        d.rounded_rectangle([s * 0.40, y, s * 0.40 + s * w, y + s * 0.06],
+                            radius=int(s * 0.03),
+                            fill=ACCENT if i == 0 else (120, 132, 146, 255))
+
+
+def _ic_degree(d, s):
+    """Graduation cap — the university degree."""
+    c = s / 2
+    d.polygon([(c, s * 0.16), (s * 0.96, s * 0.40), (c, s * 0.64), (s * 0.04, s * 0.40)],
+              fill=ACCENT)
+    d.polygon([(s * 0.24, s * 0.50), (s * 0.76, s * 0.50), (s * 0.76, s * 0.74),
+               (c, s * 0.86), (s * 0.24, s * 0.74)], fill=WHITE)
+    w = max(3, int(s * 0.05))
+    d.line([s * 0.90, s * 0.44, s * 0.90, s * 0.78], fill=WHITE, width=w)
+    d.ellipse([s * 0.84, s * 0.76, s * 0.96, s * 0.88], fill=WHITE)
+
+
+# --- contract / ethics marks -----------------------------------------------
+# The vocabulary a "should I take this client directly?" answer needs: the paper
+# you signed, the thing that protects the company, and the judgement call.
+def _ic_contract(d, s):
+    """A signed page — the contract / non-compete clause."""
+    d.rounded_rectangle([s * 0.14, s * 0.06, s * 0.86, s * 0.94], radius=int(s * 0.08),
+                        fill=WHITE)
+    for i, w in enumerate((0.52, 0.44, 0.58)):
+        y = s * (0.20 + i * 0.13)
+        d.rounded_rectangle([s * 0.24, y, s * 0.24 + s * w, y + s * 0.05],
+                            radius=int(s * 0.03), fill=(120, 132, 146, 255))
+    # the signature scrawl on the dotted line
+    d.line([s * 0.24, s * 0.78, s * 0.76, s * 0.78], fill=(150, 162, 176, 255),
+           width=max(2, int(s * 0.03)))
+    w = max(3, int(s * 0.06))
+    d.line([s * 0.28, s * 0.72, s * 0.40, s * 0.62], fill=ACCENT, width=w)
+    d.line([s * 0.40, s * 0.62, s * 0.48, s * 0.74], fill=ACCENT, width=w)
+    d.line([s * 0.48, s * 0.74, s * 0.62, s * 0.58], fill=ACCENT, width=w)
+
+
+def _ic_shield(d, s):
+    """Protection — NDA, confidentiality, covering yourself."""
+    c = s / 2
+    d.polygon([(c, s * 0.06), (s * 0.90, s * 0.24), (s * 0.90, s * 0.56),
+               (c, s * 0.94), (s * 0.10, s * 0.56), (s * 0.10, s * 0.24)],
+              fill=ACCENT)
+    w = max(4, int(s * 0.09))
+    d.line([s * 0.32, s * 0.48, s * 0.45, s * 0.62], fill=WHITE, width=w)
+    d.line([s * 0.45, s * 0.62, s * 0.70, s * 0.34], fill=WHITE, width=w)
+
+
+def _ic_scale(d, s):
+    """Balance scale — the ethical / legal judgement call."""
+    c = s / 2
+    w = max(3, int(s * 0.05))
+    d.line([c, s * 0.14, c, s * 0.78], fill=WHITE, width=w)          # post
+    d.line([s * 0.14, s * 0.30, s * 0.86, s * 0.30], fill=WHITE, width=w)  # beam
+    d.polygon([(s * 0.30, s * 0.82), (s * 0.70, s * 0.82), (c, s * 0.70)], fill=WHITE)
+    d.ellipse([c - s * 0.06, s * 0.10, c + s * 0.06, s * 0.22], fill=ACCENT)
+    for x in (s * 0.14, s * 0.86):                                    # the two pans
+        d.polygon([(x - s * 0.13, s * 0.42), (x + s * 0.13, s * 0.42), (x, s * 0.60)],
+                  fill=ACCENT)
+        d.line([x, s * 0.30, x, s * 0.42], fill=WHITE, width=max(2, int(s * 0.03)))
+
+
+def _ic_people(d, s):
+    """Two figures — the client relationship, you and them.
+
+    A literal handshake was drawn first and abandoned: interlocking hands at
+    76px collapse into an unreadable smear. Two head-and-shoulder silhouettes
+    say "the other party" instantly at any size.
+    """
+    for cx, fill in ((0.34, WHITE), (0.68, ACCENT)):
+        d.ellipse([s * (cx - 0.17), s * 0.14, s * (cx + 0.17), s * 0.48], fill=fill)
+        d.pieslice([s * (cx - 0.30), s * 0.52, s * (cx + 0.30), s * 1.12], 180, 360,
+                   fill=fill)
+    # a thin gap so the two bodies stay separate figures, not one mass
+    d.line([s * 0.52, s * 0.50, s * 0.52, s * 0.96], fill=(10, 14, 20, 255),
+           width=max(2, int(s * 0.05)))
+
+
+def _ic_mail(d, s):
+    d.rounded_rectangle([s * 0.06, s * 0.22, s * 0.94, s * 0.78], radius=int(s * 0.08),
+                        fill=WHITE)
+    d.line([s * 0.10, s * 0.26, s / 2, s * 0.56], fill=ACCENT, width=max(3, int(s * 0.07)))
+    d.line([s * 0.90, s * 0.26, s / 2, s * 0.56], fill=ACCENT, width=max(3, int(s * 0.07)))
+
+
 ICONS = {
     "code": _ic_code, "linkedin": _ic_linkedin, "github": _ic_github,
     "doc": _ic_doc, "resume": _ic_doc, "briefcase": _ic_briefcase, "job": _ic_briefcase,
     "ai": _ic_ai, "skill": _ic_skill, "star": _ic_skill, "rocket": _ic_rocket,
     "warning": _ic_warning, "java": _ic_java, "cloud": _ic_cloud, "terminal": _ic_terminal,
+    # hiring platforms + freelancing
+    "upwork": _ic_upwork, "fiverr": _ic_fiverr, "indeed": _ic_indeed,
+    "glassdoor": _ic_glassdoor, "toptal": _ic_toptal, "freelancer": _ic_freelancer,
+    "turing": _ic_turing, "andela": _ic_andela, "remotebase": _ic_remotebase,
+    "globe": _ic_globe, "remote": _ic_globe, "money": _ic_money, "clock": _ic_clock,
+    "search": _ic_search, "mail": _ic_mail,
+    # CV / resume anatomy
+    "pages": _ic_pages, "degree": _ic_degree, "university": _ic_degree,
+    # contract / ethics
+    "contract": _ic_contract, "clause": _ic_contract, "nda": _ic_shield,
+    "shield": _ic_shield, "scale": _ic_scale, "ethics": _ic_scale,
+    "people": _ic_people, "handshake": _ic_people, "trust": _ic_people,
+    "client": _ic_people,
 }
 
 # keyword -> (display label, icon) used by auto()
@@ -168,6 +370,25 @@ KEYWORD_MAP = {
     "interview": ("INTERVIEW", "briefcase"), "career": ("CAREER", "rocket"),
     "scam": ("RED FLAG", "warning"), "fake": ("RED FLAG", "warning"),
     "paid": ("PAID", "warning"), "money": ("PAYMENT", "warning"),
+    "upwork": ("UPWORK", "upwork"), "fiverr": ("FIVERR", "fiverr"),
+    "indeed": ("INDEED", "indeed"), "glassdoor": ("GLASSDOOR", "glassdoor"),
+    "toptal": ("TOPTAL", "toptal"), "freelancer": ("FREELANCER", "freelancer"),
+    "turing": ("TURING", "turing"), "andela": ("ANDELA", "andela"),
+    "remotebase": ("REMOTEBASE", "remotebase"),
+    "freelancing": ("FREELANCING", "freelancer"), "remote": ("REMOTE JOBS", "globe"),
+    "upwork.com": ("UPWORK", "upwork"), "profile": ("PROFILE", "search"),
+    "proposal": ("PROPOSAL", "mail"), "proposals": ("PROPOSALS", "mail"),
+    "rate": ("HOURLY RATE", "money"), "dollar": ("DOLLARS", "money"),
+    "dollars": ("DOLLARS", "money"), "timezone": ("TIME ZONE", "clock"),
+    "degree": ("DEGREE", "degree"), "university": ("UNIVERSITY", "degree"),
+    "page": ("ONE PAGE", "doc"), "pages": ("PAGE LIMIT", "pages"),
+    "screening": ("SCREENING", "search"), "concise": ("BE CONCISE", "pages"),
+    "contract": ("CONTRACT", "contract"), "clause": ("THE CLAUSE", "contract"),
+    "agreement": ("AGREEMENT", "contract"), "sign": ("READ BEFORE SIGNING", "contract"),
+    "nda": ("NDA", "shield"), "confidential": ("CONFIDENTIAL", "shield"),
+    "ethics": ("ETHICS", "scale"), "ethical": ("ETHICS", "scale"),
+    "legal": ("LEGAL", "scale"), "client": ("THE CLIENT", "handshake"),
+    "clients": ("CLIENTS", "handshake"), "reputation": ("REPUTATION", "star"),
 }
 
 
