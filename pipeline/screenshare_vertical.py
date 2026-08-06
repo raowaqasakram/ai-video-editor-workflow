@@ -72,7 +72,12 @@ LAYOUT_SRC_H = 720
 # y=1282); at the old FACE_Y=940 the camera well ran to 1321, which the caption
 # would have covered. The vertical budget is therefore:
 #
-#     name tag ends 248 | gap | screen (~405) | gap | camera (~381) | caption 1282
+#     top band ends 308 | screen (~405) | gap | camera (~381) | caption 1282
+#
+# The top band holds the "SCREEN SHARE" status pill (top-left, 128..188) and is
+# where tech_overlays anchors its chips and stat cards (top-right, from y=196).
+# It used to also carry a second permanent name tag, which is what the overlays
+# collided with; see _brand_bg.
 #
 # Do not lower these without also lowering the caption, and vice versa — the
 # constants are coupled and tests/test_pipeline_quality.py asserts they do not
@@ -81,7 +86,7 @@ LAYOUT_SRC_H = 720
 SCREEN_W = 1010
 SCREEN_H = round(SHARE_CROP[1] * SCREEN_W / SHARE_CROP[0])   # keep aspect (~405)
 SCREEN_X = (W - SCREEN_W) // 2
-SCREEN_Y = 308                       # 60px below the name tag
+SCREEN_Y = 308                       # below the top band's status pill + chips
 
 FACE_W = 560
 FACE_H = round(FACE_PIP_CROP[1] * FACE_W / FACE_PIP_CROP[0])  # keep aspect (~381)
@@ -257,26 +262,21 @@ def _brand_bg(path, background="blur"):
     _well(img, d, SCREEN_X, SCREEN_Y, SCREEN_W, SCREEN_H)
     _well(img, d, FACE_X, FACE_Y, FACE_W, FACE_H)
 
-    # name tag (top-left)
-    nf = ro.font(46, "Heavy")
-    tf = ro.font(30, "Semibold")
-    x, y = 60, 110
-    nw = d.textlength(NAME, font=nf)
-    tw = d.textlength(TITLE, font=tf)
-    bw = max(nw, tw) + 120
-    d.rounded_rectangle([x, y, x + bw, y + 138], radius=22, fill=(12, 16, 22, 235))
-    d.rectangle([x, y + 20, x + 9, y + 118], fill=ACCENT)
-    d.text((x + 36, y + 22), NAME, font=nf, fill=WHITE)
-    d.text((x + 36, y + 84), TITLE, font=tf, fill=ACCENT)
-
-    # "SCREEN SHARE" pill (top-right)
+    # "SCREEN SHARE" pill (top-LEFT).
+    #
+    # This corner used to hold a second, permanent name tag. It was redundant —
+    # build_reel already overlays the name tag over the first NAME_TAG_SECONDS of
+    # the reel, and the outro carries the handle — and it was the one thing in the
+    # top band wide enough to collide with the tech chips and stat cards anchored
+    # top-right at tech_overlays.ANCHOR_Y. Wide overlays ("FLUID VOICE", a "442 MB"
+    # stat card) landed on top of it. Moving the status pill into the vacated
+    # corner makes the split explicit: top-LEFT is status, top-RIGHT belongs to the
+    # overlay layer.
     pf = ro.font(30, "Heavy")
     label = "SCREEN SHARE"
     lw = d.textlength(label, font=pf)
-    pw = lw + 96
-    px1 = W - 60
-    px0 = px1 - pw
-    py0 = 128
+    px0, py0 = 60, 128
+    px1 = px0 + lw + 96
     d.rounded_rectangle([px0, py0, px1, py0 + 60], radius=30,
                         fill=(ACCENT[0], ACCENT[1], ACCENT[2], 40), outline=ACCENT, width=2)
     d.ellipse([px0 + 30, py0 + 24, px0 + 42, py0 + 36], fill=ACCENT)
@@ -381,13 +381,19 @@ def _build_timeline(shares, dur_total):
     return timeline
 
 
-def _measure_grade(video, timeline, workdir, enabled, k=1.0, face_crop=None):
+def _measure_grade(video, timeline, workdir, enabled, k=1.0, face_crop=None,
+                   grade_crop=None, grade_target=None):
     """Measure the colour correction once, on camera footage, for the whole body.
 
     Measuring per segment would make the grade drift visibly across cuts, so we
     characterise the recording once and apply the same correction everywhere.
     Prefers a face span (full-frame camera); falls back to the camera PIP crop
     when the clip is share-only.
+
+    `grade_crop` ("w:h:x:y" in SOURCE pixels) narrows the measurement to the
+    speaker. Reach for it when the room is lit differently from him — the
+    shipping crop is mostly wall here, so a bright backdrop reads as a correctly
+    exposed frame while he ships dark. See grade.SUBJECT_TARGET_LUMA.
     """
     if not enabled:
         return ""
@@ -398,14 +404,28 @@ def _measure_grade(video, timeline, workdir, enabled, k=1.0, face_crop=None):
     else:
         start, end = timeline[0][0], timeline[0][1]
         pre = "crop=%d:%d:%d:%d" % scale_crop(FACE_PIP_CROP, k)
-    window = min(GRADE_SAMPLE_SECONDS, max(1.0, end - start))
+    subject = bool(grade_crop)
+    if subject:
+        pre = "crop=" + (grade_crop if isinstance(grade_crop, str)
+                         else "%d:%d:%d:%d" % tuple(grade_crop))
+    # A 20s sample characterises room lighting fine, but it is not enough for a
+    # face: a face is only as bright as where it is pointing. On 25 Jul Q7 he
+    # spends the opening reading the question with his head down, so the first
+    # 20s measure 0.299 against 0.358 across the whole answer — a third of a stop
+    # of error, straight into the emitted gamma. Subject mode therefore samples
+    # the entire span (`measure` spreads a fixed frame budget over it, so a long
+    # window costs decode time, not sample count).
+    window = (max(1.0, end - start) if subject
+              else min(GRADE_SAMPLE_SECONDS, max(1.0, end - start)))
     return grade.auto_filter(video, start=start, dur=window, pre_filter=pre,
-                             cache_dir=workdir)
+                             cache_dir=workdir, subject=subject,
+                             subject_target=grade_target)
 
 
 def render(video, out, shares=None, workdir=None, quality="final",
            orientation="vertical", auto_grade=True, workers=WORKERS,
-           background="blur", caption_y=None, face_crop=None):
+           background="blur", caption_y=None, face_crop=None, grade_crop=None,
+           grade_target=None):
     """Build the screen-share-aware vertical for `video` -> `out`.
 
     Args:
@@ -424,6 +444,13 @@ def render(video, out, shares=None, workdir=None, quality="final",
         face_crop: "w:h:x:y" in SOURCE pixels, overriding the measured default for
             streams where the speaker is not centred in frame. None = the default,
             scaled to the source resolution.
+        grade_crop: "w:h:x:y" in SOURCE pixels bounding the SPEAKER, used only to
+            measure the grade. Set it when the room is lit differently from him
+            (a bright wall behind a backlit face), or the measurement averages
+            him away and he ships dark. None = measure the whole framing crop.
+        grade_target: exposure to aim the speaker at, with `grade_crop` set.
+            None = grade.SUBJECT_TARGET_LUMA (the look accepted on 25 Jul Q7).
+            Raise it when he asks for a brighter render — 1 Aug Q1 ships 0.54.
 
     Camera segments use the blurred-fit framing; screen-share segments use the
     stacked layout, so the shared screen stays legible.
@@ -453,7 +480,8 @@ def render(video, out, shares=None, workdir=None, quality="final",
     print("camera crop: %s (source pixels)" % face_crop_for(k, face_crop))
 
     timeline = _build_timeline(shares, dur_total)
-    grade_vf = _measure_grade(video, timeline, workdir, auto_grade, k, face_crop)
+    grade_vf = _measure_grade(video, timeline, workdir, auto_grade, k, face_crop,
+                              grade_crop, grade_target)
 
     bg_png = os.path.join(workdir, "share_bg.png")
     smask_png = os.path.join(workdir, "screen_mask.png")

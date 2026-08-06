@@ -57,11 +57,31 @@ def test_captions_do_not_cover_the_screen_share_camera_well():
         "caption starts at %d but the camera well ends at %d" % (top, well_bottom))
 
 
-def test_screen_share_wells_clear_the_name_tag():
-    """The shared-screen well must not collide with the name tag above it."""
-    name_tag_bottom = 248            # _brand_bg draws it at y=110, height 138
-    assert ssv.SCREEN_Y > name_tag_bottom
+def test_screen_share_wells_clear_the_top_band():
+    """The shared-screen well must not collide with the status pill above it, and
+    the two wells must not collide with each other."""
+    pill_bottom = 188                # _brand_bg draws it at y=128, height 60
+    assert ssv.SCREEN_Y > pill_bottom
     assert ssv.FACE_Y > ssv.SCREEN_Y + ssv.SCREEN_H
+
+
+def test_share_plate_leaves_the_overlay_corner_free():
+    """The share plate must not draw anything into the band the tech chips and
+    stat cards own (top-right, from tech_overlays.ANCHOR_Y down).
+
+    The separation is VERTICAL, not horizontal: chips are right-anchored but a long
+    label ("TECHNICAL INSTRUCTIONS") is ~900px wide, so it reaches most of the way
+    across the canvas and cannot be made to clear anything by staying right.
+
+    It used to fail: a second permanent name tag ran y=110..248, straddling the
+    overlay's own top edge at ANCHOR_Y=196, so every wide overlay landed on it. The
+    status pill ends at 188 and is the only furniture left in the band.
+    """
+    import tech_overlays as tech
+    pill_bottom = 128 + 60           # _brand_bg draws it at y=128, height 60
+    assert pill_bottom <= tech.ANCHOR_Y, (
+        "the status pill ends at %d, inside the overlay band starting at %d"
+        % (pill_bottom, tech.ANCHOR_Y))
 
 
 def test_footage_band_stops_where_the_caption_starts():
@@ -224,6 +244,101 @@ def test_grade_never_shifts_hue():
 
 def test_grade_falls_back_when_analysis_fails():
     assert grade.filter_from_stats(None) == grade.FALLBACK
+
+
+# --- colour grade, subject mode -----------------------------------------------
+# The bug this mode exists for: on 25 Jul Q7 the camera metered for a large white
+# wall, so the shipping crop measured 0.576 ("correct") while his face sat at
+# 0.358 and shipped looking black. Measuring the face is the whole fix.
+
+def test_subject_mode_lifts_a_backlit_face_the_crop_wide_bands_call_fine():
+    """The exact numbers off 25 Jul Q7 — the crop says fine, the face does not."""
+    crop_wide = grade.filter_from_stats(
+        {"luma": 0.576, "range": 0.888, "saturation": 0.0198})
+    assert "gamma" not in crop_wide          # this is the miss being corrected
+
+    face = grade.subject_filter_from_stats(
+        {"luma": 0.3577, "range": 0.679, "saturation": 0.0474})
+    gamma = float(dict(t.split("=") for t in face.replace("eq=", "").split(":"))["gamma"])
+    assert gamma > 1.30      # he chose 1.35 off the rendered ladder
+    assert 0.3577 ** (1 / gamma) == pytest.approx(grade.SUBJECT_TARGET_LUMA, abs=0.01)
+
+
+def test_subject_mode_leaves_an_already_correct_face_alone():
+    vf = grade.subject_filter_from_stats(
+        {"luma": grade.SUBJECT_TARGET_LUMA, "range": 0.80, "saturation": 0.045})
+    assert "gamma" not in vf
+
+
+@pytest.mark.parametrize("stats", [
+    {"luma": 0.02, "range": 0.20, "saturation": 0.001},   # near-black subject
+    {"luma": 0.99, "range": 0.99, "saturation": 0.500},   # blown out
+    {"luma": 0.0, "range": 0.5, "saturation": 0.03},      # degenerate
+    {"luma": 1.0, "range": 0.5, "saturation": 0.03},      # degenerate
+])
+def test_subject_mode_stays_inside_its_own_clamps(stats):
+    """A wider gamma range is still a bounded one — and log() must not blow up."""
+    vf = grade.subject_filter_from_stats(stats)
+    if not vf:
+        return
+    for term in vf.replace("eq=", "").split(":"):
+        name, value = term.split("=")
+        low, high = grade.SUBJECT_CLAMP[name]
+        assert low <= float(value) <= high
+
+
+def test_subject_mode_never_shifts_hue():
+    """Same brand rule as the crop-wide path: correct exposure, never restyle."""
+    for stats in ({"luma": 0.2, "range": 0.3, "saturation": 0.01},
+                  {"luma": 0.9, "range": 0.9, "saturation": 0.4}):
+        vf = grade.subject_filter_from_stats(stats)
+        assert "colorbalance" not in vf and "curves" not in vf and "hue" not in vf
+
+
+def test_a_single_low_contrast_frame_cannot_halve_the_measurement_scale(tmp_path):
+    """YBITDEPTH is per FRAME, so the last frame's value must not set the scale.
+
+    1 Aug Q1: 99 sampled frames reported 8 bits and the last reported 7, which
+    halved `full` and doubled every statistic — a face at 0.455 was read as 0.906
+    and graded DARKER on the one video that was asked to be brighter.
+    """
+    meta = tmp_path / "signalstats.txt"
+    meta.write_text("".join(
+        "lavfi.signalstats.YBITDEPTH={}\nlavfi.signalstats.YAVG=116.0\n"
+        "lavfi.signalstats.YMIN=16.0\nlavfi.signalstats.YMAX=202.0\n"
+        "lavfi.signalstats.SATAVG=11.8\n".format(8 if i else 7)
+        for i in range(3)[::-1]))          # the 7-bit frame is sampled LAST
+
+    stats = grade.stats_from_metadata(str(meta))
+    assert stats["luma"] == pytest.approx(116.0 / 255, abs=0.002)
+    assert stats["range"] < 1.0           # the doubled read produced 1.45
+
+    # and the corrected reading is what puts the emitted gamma the right way up
+    assert "gamma=0.9" not in grade.subject_filter_from_stats(stats, 0.5424)
+
+
+def test_grade_target_aims_higher_without_moving_the_default():
+    """1 Aug: "brightness should be increased" — aim higher, don't hardcode a gamma.
+
+    His face measured 0.4515 on 1 Aug Q1, which is inside the deadzone around the
+    default target, so the default emits nothing. He picked the 0.54 rung off the
+    rendered ladder; a per-video target reproduces it and carries to the next room,
+    where a hardcoded gamma would not.
+    """
+    stats = {"luma": 0.4515, "range": 0.7287, "saturation": 0.0462}
+    assert "gamma" not in grade.subject_filter_from_stats(stats)
+
+    vf = grade.subject_filter_from_stats(stats, 0.5424)
+    gamma = float(dict(t.split("=") for t in vf.replace("eq=", "").split(":"))["gamma"])
+    assert stats["luma"] ** (1 / gamma) == pytest.approx(0.5424, abs=0.01)
+    low, high = grade.SUBJECT_CLAMP["gamma"]
+    assert low <= gamma <= high          # a raised target is still a bounded one
+
+
+def test_subject_mode_is_opt_in_so_shipped_videos_re_render_identically():
+    """grade_crop=None must leave the 17 Jul path bit-for-bit unchanged."""
+    stats = {"luma": 0.6645, "range": 0.8331, "saturation": 0.0185}
+    assert grade.filter_from_stats(stats) == "eq=contrast=1.030:saturation=1.040"
 
 
 # --- audio mastering ----------------------------------------------------------

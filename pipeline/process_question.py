@@ -35,6 +35,14 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "face_crop":    null,       # "w:h:x:y" in SOURCE pixels; null = the measured
                               # default, scaled to the source resolution. Set it
                               # when the speaker is not centred in frame.
+  "grade_crop":   null,       # "w:h:x:y" in SOURCE pixels around the SPEAKER,
+                              # used ONLY to measure the grade. Set it when the
+                              # room is lit differently from him — a big bright
+                              # wall averages a backlit face away and he ships
+                              # dark. null = measure the whole framing crop.
+  "grade_target": null,       # exposure to aim his face at (0..1) when
+                              # grade_crop is set. null = grade.SUBJECT_TARGET_
+                              # LUMA. Raise it for a brighter render.
   "card_design":  null        # intro-card design: index or name from
                               # overlays.CARD_DESIGNS. null = round-robin on the
                               # Q<N> folder number (classic, spotlight, panel,
@@ -90,6 +98,8 @@ TEMPLATE = {
     "background": "blur",
     "caption_theme": None,
     "face_crop": None,
+    "grade_crop": None,
+    "grade_target": None,
     "card_design": None,
     # upload metadata (ALWAYS filled — catchy title + description + hashtags):
     "video_title": "CATCHY TITLE UNDER 70 CHARS",
@@ -151,6 +161,33 @@ def _write_metadata(cfg, out_dir, reel_path):
     json.dump(meta, open(os.path.join(out_dir, "metadata.json"), "w"),
               indent=2, ensure_ascii=False)
     print(f"metadata files written -> {out_dir}")
+
+
+def _srt_time(t):
+    h, rem = divmod(max(0.0, t), 3600)
+    m, s = divmod(rem, 60)
+    return "%02d:%02d:%06.3f" % (h, m, s)  # SRT wants a comma decimal, fixed below
+
+
+def _write_srt(caps, out_dir, name="subtitles.srt"):
+    """Write the burned-in captions out as an uploadable subtitle file.
+
+    The captions are in BODY time, but the reel opens with the question card, so
+    every cue is shifted by `br.CARD_DUR` to line up with the exported file.
+    Platforms that accept a subtitle track (YouTube, LinkedIn) then carry the same
+    Roman-Urdu text the video already shows.
+    """
+    if not isinstance(caps, list) or not caps:
+        return None
+    path = os.path.join(out_dir, name)
+    blocks = []
+    for i, c in enumerate(caps, 1):
+        start = _srt_time(float(c[0]) + br.CARD_DUR).replace(".", ",")
+        end = _srt_time(float(c[1]) + br.CARD_DUR).replace(".", ",")
+        blocks.append("%d\n%s --> %s\n%s\n" % (i, start, end, c[2]))
+    open(path, "w").write("\n".join(blocks))
+    print(f"subtitles -> {path} ({len(caps)} cues)")
+    return path
 
 
 def _speech_spans(out_dir, cfg):
@@ -246,7 +283,9 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         ssv.render(clip, body, shares=cfg.get("shares"), quality=quality,
                    auto_grade=cfg.get("auto_grade", True),
                    background=background, caption_y=caption_y,
-                   face_crop=cfg.get("face_crop"))
+                   face_crop=cfg.get("face_crop"),
+                   grade_crop=cfg.get("grade_crop"),
+                   grade_target=cfg.get("grade_target"))
     else:
         print(f"body cached -> {body} (pass --force to rebuild)")
 
@@ -288,8 +327,9 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         caption_y=caption_y, caption_theme=caption_theme,
         card_design=card_design)
 
-    # 4) upload deliverables (title/description/hashtags/metadata) — always
+    # 4) upload deliverables (title/description/hashtags/metadata/subtitles) — always
     _write_metadata(cfg, out_dir, reel)
+    _write_srt(caps, out_dir)
 
     # 5) automated QC. These are the failures that never raise during rendering:
     #    a frozen tail, a duration that does not match the parts, loudness drift,

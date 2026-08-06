@@ -82,6 +82,8 @@ full-length holding the wrong footage — silently. Assert output durations.
 
 ```jsonc
 "face_crop": "746:776:0:0",  // SOURCE pixels; null = measured default, scaled
+"grade_crop": null,          // SOURCE pixels around HIM, measured for the grade
+"grade_target": null,        // how bright his face should read (null = 0.47)
 "background": "white",       // ALWAYS white unless told otherwise
 "caption_y": 1549,           // see below
 "card_design": null          // null = round-robin on the Q<N> folder number
@@ -160,8 +162,47 @@ alongside captions. Config field `tech`:
 - `null` — no chips.
 
 Icons available: `briefcase, doc, code, terminal, github, linkedin, cloud, java,
-ai, skill/star, rocket, warning`. Rules learned on Q2: keep chips **clear of the
-first 5s** (the name tag owns the top band then), one chip at a time, ~3s each.
+ai, skill/star, rocket, warning`, plus the hiring-platform marks added on 30 Jul —
+`upwork, fiverr, indeed, glassdoor, toptal, freelancer, turing, andela, remotebase,
+globe/remote, money, clock, search, mail`, the study-life pair added on 31 Jul —
+`calendar/semester/schedule, target/focus` — and, for "should I work abroad?" answers,
+**country flags** `ksa/saudi, uae, bahrain, pakistan, eu/europe` plus
+`passport, visa/stamp, plane/travel, jail, city, percent/quota, ban/dont`, and the
+speech-to-text set added on 1 Aug — `mic/voice, keyboard/typing, wave/speech,
+claude, openai/chatgpt/gpt, fluidvoice/fluid, flow/whisperflow/whisper, download`,
+and the requirements/product-design set added on 1 Aug — `ui/interface/frontend/design,
+typescript/ts, phone/iphone/mobile, architecture/systemdesign/layers, bulb/idea/brainstorm,
+slides/presentation, sliders/custom/customization, tenable`.
+Rules learned on Q2: keep chips **clear of
+the first 5s** (the name tag owns the top band then), one chip at a time, ~3s each.
+
+⚠️ A drawn mark's symmetry can swallow the rotation you gave it. The ChatGPT glyph is
+two hexagon outlines offset by **pi/6**: at the pi/3 first written they landed on the
+same six points and rendered as one plain hexagon. Render every new icon at 2x and
+**look at it** — this one passed every mechanical check.
+
+### Stat cards — the second overlay style (2026-07-31)
+
+A chip is one line of text, which is the wrong shape for the moments an answer turns
+on: `60%`, `10 -> 6`, `3-4 YEARS`, `8-9 LAKH`. Those get a **stat card** instead —
+the number in display type with the thing it counts underneath, same pop-in and the
+same timeline. Add a 5th and 6th element to the item:
+
+```jsonc
+[12.9, 15.5, "ONLY GRADES", "degree"],                        // chip
+[356.2, 359.2, "60%", "percent", "stat", "HEALTH + FINANCE"]  // stat card
+```
+
+`layer()` renders either without caring which it got (`tech_overlays._render`).
+Keep the value short — it is set at 78pt, and the card is right-anchored at
+x=1018, so a very long value walks off the left edge. Q1 (75 overlays, 16 of them
+stat cards) is the worked example.
+
+**Hand-time `tech.json` on every video** rather than leaving `tech` on `"auto"`: when he
+names a product or company, its own mark should be on screen at that moment. That is the
+standing brief (see the memory `feedback-animate-what-he-says`), and `"auto"` only fires
+on the generic keyword list. Add a `_ic_*` glyph in the brand's colour when a platform is
+missing — 76px is the whole job, these are recognisable glyphs, not trademark files.
 
 ### Reusable modules (`pipeline/`)
 
@@ -374,6 +415,72 @@ Inspect what it would do, without rendering:
 python3 pipeline/grade.py --analyze "<clip>.mp4" --dur 20 --crop 555:588:362:0
 ```
 
+### When the wall outvotes his face — `grade_crop` (2026-08-04)
+
+Measuring the *shipping crop* is right only while the room and the speaker are lit
+alike. On 25 Jul Q7 they were not: he sits in front of a large white wall and a
+mirror, the camera metered for those, and the numbers came out
+
+```
+shipping crop (555x588, mostly wall)   luma 0.576  -> inside LUMA_OK -> no correction
+his face      (135x130 box)            luma 0.358  -> nearly black on export
+```
+
+So auto-grade reported the frame as correctly exposed while the man in it shipped
+dark. He rejected it — *"my skin colour should be fair, not sure why output i am
+black colour"*. The wall is more than half the crop, so no amount of retuning the
+crop-wide bands can see past it; the measurement region itself is the bug.
+
+`config.json → "grade_crop": "w:h:x:y"` (SOURCE pixels) points the measurement at
+a tight box around **him**. That switches `grade.py` to a second calibration:
+
+| | crop-wide (default) | subject (`grade_crop` set) |
+| --- | --- | --- |
+| calibrated on | the 555×588 shipping crop | a tight face box |
+| "correct" reads | luma 0.65–0.67 | luma ~0.47 (`SUBJECT_TARGET_LUMA`) |
+| method | leave-alone band + nudge | solve `gamma` for the target |
+| gamma clamp | 0.94–1.10 | 0.90–1.60 |
+
+The two **cannot share bands** — measured on the same tight face box, the accepted
+17 Jul look reads 0.421, not 0.66. Gamma is the lever because it pins both ends of
+the scale: opening his face by a third moves a 0.95 wall to 0.96, so the white
+fill behind him stays white. Contrast and saturation stay as timid as everywhere
+else; this corrects exposure, it does not restyle.
+
+```bash
+# check a face box before committing it
+python3 pipeline/grade.py --analyze "<clip>.mp4" --dur 190 --crop 135:130:620:350 --subject
+```
+
+**How bright is "correct" is a per-video knob.** `SUBJECT_TARGET_LUMA` (0.47) is
+the exposure accepted on 25 Jul Q7; when he asks for brighter, raise
+`config.json -> "grade_target"` rather than hardcoding a gamma — a gamma is only
+right for the clip it was eyeballed on, a target carries to the next room.
+1 Aug Q1 ships **0.5424** (the rung he picked off a rendered ladder → `gamma 1.300`).
+
+```bash
+python3 pipeline/grade.py --analyze "<clip>.mp4" --crop <face box> --subject --subject-target 0.5424
+```
+
+⚠️ **`YBITDEPTH` is reported per FRAME, not per file** (2026-08-06). It is the
+number of bits that frame actually uses, so one low-contrast frame in a sample
+reports 7. `measure()` used to keep the last value read, which halves `full` and
+**doubles every statistic**: on 1 Aug Q1, 99 sampled frames said 8 and the last
+said 7, so a face measuring 0.451 was reported as 0.906 — "blown out" — and the
+grade came back `gamma=0.900`, darkening the one video that had been asked to be
+brighter. `stats_from_metadata()` now takes the **maximum**, and
+`tests/test_pipeline_quality.py` pins it. Nothing about this raises: the render
+succeeds, QC passes, and only looking at the export catches it.
+
+**It is opt-in.** `grade_crop: null` is the default and leaves the crop-wide path
+bit-for-bit unchanged, so everything already shipped re-renders identically —
+`tests/test_pipeline_quality.py` asserts exactly that, plus the clamps and the
+0.358 → 0.47 solve. Set it per stream, the way `face_crop` is set: same room, same
+box. On the 25 Jul room the pair is `face_crop "520:560:425:35"`,
+`grade_crop "135:130:620:350"`. On the **1 Aug sofa room** (1280×720) it is
+`face_crop "700:518:340:67"`, `grade_crop "150:170:590:115"`,
+`grade_target 0.5424`.
+
 Screen-share segments are graded on the **camera PIP only** — the shared screen is left
 exactly as captured, because nudging contrast on someone's code or slides makes it harder
 to read, not easier.
@@ -410,6 +517,8 @@ Per question package: `title.txt` (<70 chars, no clickbait), `thumbnail_title.tx
 
 `process_question.py` writes these from `config.json` and warns before anything overflows
 a platform field (title >100 chars hard limit, >70 advisory; description >5000).
+`subtitles.srt` comes from the same run: `_write_srt()` shifts the burned-in captions by
+`build_reel.CARD_DUR` so the cue file lines up with the exported reel, not with the body.
 
 ## 7. Review the packed stream (low-token)
 
@@ -491,6 +600,28 @@ bottom third. It now ends at ~1162, clearing the bar top at 1282. The vertical b
 ```
 name tag ends 248 | gap | shared screen (~405) | gap | camera (~381) | caption 1282
 ```
+
+### The share plate's top band belongs to the overlays (2026-08-01)
+
+The share plate used to draw a **second, permanent name tag** top-left (y=110..248) and
+the "SCREEN SHARE" pill top-right. That name tag straddled `tech_overlays.ANCHOR_Y`
+(196), so every overlay wider than ~430px landed on top of it — and a chip is
+right-anchored, so a long label like `TECHNICAL INSTRUCTIONS` (~900px) reaches most of
+the way across the canvas and **cannot** be made to clear it by staying right. A `442 MB`
+stat card sat squarely on the name tag on 25 Jul Q1.
+
+The name tag is gone from the plate and the status pill moved into that corner:
+
+```
+top-LEFT = status ("SCREEN SHARE", y=128..188)   top-RIGHT = the overlay layer (y>=196)
+```
+
+Nothing is lost — `build_reel` already overlays the name tag over the first
+`NAME_TAG_SECONDS` of the reel, and the outro carries the handle. The vertical budget is
+now `top band ends 308 | screen (~405) | gap | camera (~381) | caption 1282`.
+`tests/test_pipeline_quality.py` asserts the pill ends **above** `ANCHOR_Y`, which is the
+invariant the old name tag broke. Overlays now sit over the shared screen's top edge,
+which reads as deliberate layering.
 
 ⚠️ **Three things are coupled to the caption position:** the screen-share camera well, the
 platform UI band, and now the blurred-fit seam. Do not move the caption without checking all
