@@ -694,6 +694,56 @@ def _ic_sliders(d, s):
         d.ellipse([s * kx - r, s * y - r, s * kx + r, s * y + r], fill=ACCENT)
 
 
+def _ic_flutter(d, s):
+    """Flutter — the two offset chevrons, in its light/dark blue pair.
+
+    Added for 1 Aug Q9, where the whole answer is "you already have Flutter, now
+    you also have Spring Boot": the mark has to be on screen when he names it.
+    """
+    lo, hi = (1, 87, 155, 255), (84, 197, 248, 255)   # #01579B / #54C5F8
+    # upper blade: a parallelogram running down-right
+    d.polygon([(s * 0.62, s * 0.06), (s * 0.96, s * 0.06),
+               (s * 0.30, s * 0.72), (s * 0.13, s * 0.55)], fill=hi)
+    # lower blade, folded back off the mid-point
+    d.polygon([(s * 0.62, s * 0.52), (s * 0.96, s * 0.52),
+               (s * 0.62, s * 0.94), (s * 0.28, s * 0.94)], fill=lo)
+    # the lit fold where the two meet
+    d.polygon([(s * 0.62, s * 0.52), (s * 0.79, s * 0.73),
+               (s * 0.62, s * 0.94), (s * 0.45, s * 0.73)], fill=hi)
+
+
+def _ic_spring(d, s):
+    """Spring Boot — the green leaf.
+
+    `spring` used to fall through to the Java cup in KEYWORD_MAP, which is the
+    wrong mark for the framework: he names Java and Spring Boot as two separate
+    things in the same sentence, so they need two glyphs.
+    """
+    g = (109, 179, 63, 255)                            # #6DB33F
+    # leaf body: a wedge curving from bottom-left up to the tip at top-right
+    d.polygon([(s * 0.14, s * 0.86), (s * 0.30, s * 0.34), (s * 0.72, s * 0.10),
+               (s * 0.90, s * 0.22), (s * 0.74, s * 0.66), (s * 0.34, s * 0.88)],
+              fill=g)
+    d.ellipse([s * 0.20, s * 0.30, s * 0.86, s * 0.84], fill=g)
+    # the stem, and the vein that makes it read as a leaf rather than a blob
+    w = max(3, int(s * 0.055))
+    d.line([(s * 0.10, s * 0.92), (s * 0.82, s * 0.16)], fill=g, width=w)
+    d.line([(s * 0.30, s * 0.74), (s * 0.74, s * 0.30)],
+           fill=(255, 255, 255, 150), width=max(2, int(s * 0.035)))
+
+
+def _ic_dotnet(d, s):
+    """.NET — the purple roundel with its wordmark.
+
+    He names .NET seven times in 1 Aug Q9 (the whole story is Java -> .NET), so
+    it needs its own mark rather than the generic code glyph.
+    """
+    d.ellipse([0, 0, s, s], fill=(81, 43, 212, 255))          # #512BD4
+    f = ro.font(int(s * 0.30), "Heavy")
+    t = ".NET"
+    d.text(((s - d.textlength(t, font=f)) / 2, s * 0.34), t, font=f, fill=WHITE)
+
+
 def _ic_tenable(d, s):
     """Tenable — the vendor he uses as the 'hundreds of customers' example.
     Their teal tile with the wordmark initial; a recognisable chip, not a
@@ -809,6 +859,10 @@ ICONS = {
     "slides": _ic_slides, "presentation": _ic_slides,
     "sliders": _ic_sliders, "custom": _ic_sliders, "customization": _ic_sliders,
     "tenable": _ic_tenable,
+    # frameworks he names side by side (1 Aug Q9)
+    "flutter": _ic_flutter, "dart": _ic_flutter,
+    "dotnet": _ic_dotnet, "net": _ic_dotnet, "csharp": _ic_dotnet,
+    "spring": _ic_spring, "springboot": _ic_spring, "boot": _ic_spring,
 }
 
 # keyword -> (display label, icon) used by auto()
@@ -821,7 +875,8 @@ KEYWORD_MAP = {
     "skills": ("SKILLS", "skill"), "experience": ("EXPERIENCE", "star"),
     "certificate": ("CERTIFICATE", "doc"), "certification": ("CERTIFICATION", "doc"),
     "offer": ("OFFER LETTER", "doc"), "resumes": ("RESUME", "doc"),
-    "java": ("JAVA", "java"), "spring": ("SPRING BOOT", "java"),
+    "java": ("JAVA", "java"), "spring": ("SPRING BOOT", "spring"),
+    "flutter": ("FLUTTER", "flutter"), "dart": ("DART", "flutter"),
     "docker": ("DOCKER", "cloud"), "kubernetes": ("KUBERNETES", "cloud"),
     "cloud": ("CLOUD", "cloud"), "aws": ("AWS", "cloud"), "azure": ("AZURE", "cloud"),
     "ai": ("AI", "ai"), "ml": ("MACHINE LEARNING", "ai"),

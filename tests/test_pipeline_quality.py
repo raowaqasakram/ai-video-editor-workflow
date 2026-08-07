@@ -21,7 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
 import audio_master  # noqa: E402
 import encode  # noqa: E402
 import grade  # noqa: E402
+import outro_cinematic  # noqa: E402
 import overlays  # noqa: E402
+import process_question  # noqa: E402
 import screenshare_vertical as ssv  # noqa: E402
 import silence  # noqa: E402
 import transcribe  # noqa: E402
@@ -454,3 +456,64 @@ def test_report_fails_only_on_failures():
     assert not rep.failed
     rep.fail("c")
     assert rep.failed
+
+
+# --- white intro card + white outro (2026-08-06) ------------------------------
+#
+# The body ships on a white fill, so a video can ask for the intro card and the
+# brand outro to be white too. The risk this locks down is not the look, it is
+# that the light palette is a SECOND path through the same renderers: a missing
+# key raises only for whichever design happens to use it, and a theme leaking
+# into the wrong render is invisible until someone looks at the export.
+
+def test_card_themes_carry_the_same_keys():
+    dark, light = overlays.CARD_THEMES["dark"], overlays.CARD_THEMES["light"]
+    assert set(dark) == set(light)
+
+
+def test_light_card_is_white_and_dark_card_is_not():
+    assert overlays.CARD_THEMES["light"]["bg"][:3] == (253, 253, 253)
+    assert overlays.CARD_THEMES["dark"]["bg"] == overlays.BG
+    # ...and the question text has to invert with it, or it is white on white.
+    assert overlays.CARD_THEMES["light"]["ink"][:3] < (60, 60, 60)
+    assert overlays.CARD_THEMES["dark"]["ink"] == overlays.WHITE
+
+
+def test_unknown_card_theme_raises(tmp_path):
+    with pytest.raises(KeyError):
+        overlays.make_question_card("q", "@h", str(tmp_path / "c.png"),
+                                    theme="beige")
+
+
+def test_outro_themes_carry_the_same_keys_and_separate_files():
+    dark, light = outro_cinematic.THEMES["dark"], outro_cinematic.THEMES["light"]
+    assert set(dark) == set(light)
+    assert dark["out"] != light["out"]        # never overwrite the shipped outro
+    assert dark["frames"] != light["frames"]  # nor mix the two frame sets
+
+
+def test_outro_set_theme_swaps_the_palette_and_restores():
+    try:
+        outro_cinematic.set_theme("light")
+        assert outro_cinematic.BG == (253, 253, 253)
+        assert outro_cinematic.VIGNETTE is False      # darkening corners on white
+        assert outro_cinematic.TEXT_GLOW == 0.0       # dark type must not bloom
+        assert outro_cinematic.OUT.endswith("outro_cinematic_light.mp4")
+    finally:
+        outro_cinematic.set_theme("dark")
+    assert outro_cinematic.BG == (8, 8, 8)
+    assert outro_cinematic.INK == outro_cinematic.WHITE
+    assert outro_cinematic.VIGNETTE is True
+    assert outro_cinematic.OUT.endswith("outro_cinematic.mp4")
+
+
+def test_intro_outro_config_maps_white_to_the_light_palette():
+    assert process_question.INTRO_OUTRO_THEMES["white"] == "light"
+    assert process_question.INTRO_OUTRO_THEMES["dark"] == "dark"
+
+
+def test_a_new_question_starts_white_on_every_surface():
+    # The standing brief is a white video; a fresh template must not have to be
+    # corrected by hand every time (feedback-white-fill-equal-borders).
+    assert process_question.TEMPLATE["background"] == "white"
+    assert process_question.TEMPLATE["intro_outro"] == "white"

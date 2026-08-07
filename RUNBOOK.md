@@ -85,6 +85,7 @@ full-length holding the wrong footage — silently. Assert output durations.
 "grade_crop": null,          // SOURCE pixels around HIM, measured for the grade
 "grade_target": null,        // how bright his face should read (null = 0.47)
 "background": "white",       // ALWAYS white unless told otherwise
+"intro_outro": "white",      // white intro card + white outro to match the body
 "caption_y": 1549,           // see below
 "card_design": null          // null = round-robin on the Q<N> folder number
 ```
@@ -221,6 +222,7 @@ missing — 76px is the whole job, these are recognisable glyphs, not trademark 
 | `pack_transcripts.py` | all questions → one compact time-annotated markdown |
 | `silence.py` | find and remove dead air; remap captions after a trim |
 | `timeline_view.py` | filmstrip + waveform + word labels PNG for eyeball QC |
+| `recover_windows.py` | re-decode a stretch Whisper lost — isolated windows, one model load |
 
 Worked example: `INPUT/17th July 2026/Clips/Q2/` (`config.json` + `captions.json` +
 `tech.json`).
@@ -241,6 +243,36 @@ already right. Measured against the hand-authored Q2 captions, the scaffold land
 ~3.3s / 8.2 words per block versus 2.89s / 7.3 hand-authored: close enough to edit rather
 than redo. Caption policy is unchanged: never ship a caption over audio you cannot
 actually hear.
+
+### When Whisper loses a stretch (`pipeline/recover_windows.py`)
+
+`large-v3` can fail completely on audio that is perfectly audible. On **1 Aug Q6** it
+looped one phrase across **9–43s** — 34 seconds of the answer — while the audio ran
+-15..-25 dBFS the whole way. Nothing raises: `transcript.json` looks full, and only
+reading it catches the loop.
+
+The fix is short **isolated** windows, each decoded in `ur` **and** `en` (on
+code-switched audio the English pass is often the one that resolves the phrase). Doing
+that by hand costs a `large-v3` load per attempt; this module loads each model once and
+sweeps every window:
+
+```bash
+python3 pipeline/recover_windows.py "<clip>.mp4" --rms 0 50          # 1. is speech there?
+python3 pipeline/recover_windows.py "<clip>.mp4" --range 9 45        # 2. sweep the loss
+python3 pipeline/recover_windows.py "<clip>.mp4" \
+    --windows 24:28 25.5:29.5 27:31 --models large-v3 medium         # 3. tighten
+```
+
+Diagnose with `--rms` first — silence is a real answer; healthy levels plus a looping
+transcript is hallucination. Caption only what **two independent decodes agree on**; on
+1 Aug Q6 the `en` pass returning "If you are a student, please do by yourself" is what
+made the Urdu decode readable. Words no decode resolves get **omitted**, not guessed.
+
+⚠️ Recovering the text is only half of it — a hallucinated loop claims *continuous
+speech*, so `silence.py` finds no dead air exactly where the longest pauses are (see
+`project-contiguous-captions-defeat-silence-trim`). Give the rebuilt caption blocks
+**tight, word-derived bounds** so the real pauses stay uncovered. On 1 Aug Q6 that left
+14 trimmable gaps and cut 7.5s of dead air that contiguous blocks would have hidden.
 
 ### Tightening pacing (`pipeline/silence.py`)
 
@@ -373,6 +405,49 @@ on the export.
 **The seam follows the caption.** `render()` now derives the seam from the
 `caption_y` it is given (`ro.caption_bar_y(2, caption_y)[0]`) instead of reading
 the module default, so moving the caption moves the footage band with it.
+
+### The intro card and the outro can be white too (2026-08-06)
+
+`background: "white"` only paints the *body*. The reel then opened on a
+near-black question card and closed on a black cinematic outro — three surfaces,
+two of them the opposite colour of the one in the middle, which reads as three
+clips joined rather than one video. `config.json → "intro_outro"` fixes the
+book-ends:
+
+| value | intro card | brand outro |
+| --- | --- | --- |
+| `"white"` | white card, near-black type | `outro_cinematic_light.mp4` |
+| `"dark"` (what a config without the field gets) | the original near-black card | `outro_cinematic.mp4` |
+
+It is **one field for both**, because they book-end the same video. The white is
+`253,253,253` in all three places — the same broadcast white `drawbox` writes
+behind the footage — so card, body bands and outro are one continuous white on
+the export rather than three nearly-matching whites.
+
+- **The card:** `overlays.CARD_THEMES` is the palette; `CARD_DESIGNS` stays the
+  layout. All five designs render in both themes (the rotation is unaffected),
+  and `make_question_card(..., theme=)` picks one. The dark cards are
+  **bit-identical** to before — checked by rendering all five designs against the
+  previous code — so nothing already shipped changes.
+- **The outro:** `outro_cinematic.set_theme()` swaps the palette; the storyboard,
+  timings and easings are untouched. `ensure(theme)` renders the light file once
+  (~150 Pillow frames, ~2 min) and caches it beside the dark one, so only the
+  first white video pays for it.
+- Two things do **not** simply invert. Glow is a blurred copy of the art
+  composited underneath: on black that is bloom, on white it is a grey smudge, so
+  the light theme sets `text_glow` to 0 and keeps only a softened ring halo. And
+  the vignette is a *darkening* multiply — on white it just greys the corners, so
+  it is off. Anything drawn in white on black (the RWA wordmark, the warp sparks,
+  the rocket body, the `FO` of `FOLLOW`, the sweep between scenes) needs a colour,
+  not a shade: white on white is nothing at all.
+- `TEMPLATE` now starts a new question at `background: "white"` +
+  `intro_outro: "white"`, which is the standing brief; a config that predates the
+  fields still reads as `"blur"` / `"dark"`.
+
+`tests/test_pipeline_quality.py` pins the parts that fail silently: both palettes
+carry the same keys (a missing one raises only for the design that uses it), the
+light bg is white with dark ink, the two outros are separate files with separate
+frame dirs, and `set_theme` restores.
 
 ### Equal white borders — and what they cost (Q7, 2026-07-28)
 

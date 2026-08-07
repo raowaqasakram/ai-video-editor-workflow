@@ -45,6 +45,95 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FRAMES = os.environ.get("OUTRO_FRAMES", os.path.join(HERE, "_cache", "outro_frames"))
 OUT = os.path.join(HERE, "outro_cinematic.mp4")
 
+# ---------------------------------------------------------------------------
+# Themes (2026-08-06)
+# ---------------------------------------------------------------------------
+# The storyboard is a dark cinematic piece, and it stays the default: every reel
+# shipped before this date ends on it. But the reel body ships on a WHITE fill,
+# so a video can now ask for a WHITE outro to match (config `intro_outro`), which
+# means the palette has to be a variable rather than a constant.
+#
+# Nothing about the animation changes between the two — same scenes, timings and
+# easings. What changes is which colours the art is drawn in, and how much glow
+# there is: on black, a blurred copy under the art reads as light bloom; on white
+# the same copy reads as a dirty smudge, so the light theme scales it right down
+# and drops the darkening vignette entirely.
+THEMES = {
+    "dark": {
+        "bg": (8, 8, 8),
+        "ink": WHITE,                     # wordmark / headline / rocket body
+        "sub": GRAY,                      # tagline under the wordmark
+        "boot": (225, 232, 240),          # terminal body text
+        "prompt": GREEN,                  # terminal ">"
+        "role": (200, 208, 218),
+        "cta_sub": (215, 222, 232),
+        "label": (170, 180, 195),         # social icon captions
+        "spark": WHITE,                    # warp streak heads
+        "flare": None,                    # None = lerp(WHITE, BLUE, 0.3)
+        "flare_alpha": 1.0,
+        "streak": None,                   # None = lerp(WHITE, BLUE, 0.25)
+        "streak_alpha": 200,
+        "star3": (BLUE, PURPLE, WHITE),
+        "star_alpha": 150,
+        "text_glow": 1.0,                 # multiplier on the text/icon bloom
+        "ring_glow": 1.0,
+        "vignette": True,
+        "out": os.path.join(HERE, "outro_cinematic.mp4"),
+        "frames": "outro_frames",
+    },
+    "light": {
+        # 253/253/253 is the broadcast white drawbox paints behind the footage,
+        # so the outro, the body's bands and the light intro card are one white.
+        "bg": (253, 253, 253),
+        "ink": (11, 15, 20),
+        # 4:1 against white was legible but faint for 26pt tracked caps; the
+        # wordmark's tagline is brand type, so it gets 5.5:1.
+        "sub": (92, 102, 116),
+        "boot": (38, 46, 58),
+        "prompt": (20, 145, 80),          # the terminal green, darkened to read on white
+        "role": (86, 96, 108),
+        "cta_sub": (96, 106, 120),
+        "label": (128, 138, 152),
+        "spark": BLUE,                    # a white spark on white is nothing
+        "flare": BLUE,
+        "flare_alpha": 0.45,              # a solid blue flare on white is a blob
+        "streak": PURPLE,
+        "streak_alpha": 65,
+        "star3": (BLUE, PURPLE, (150, 162, 178)),
+        "star_alpha": 105,
+        "text_glow": 0.0,                 # dark type does not bloom
+        "ring_glow": 0.55,
+        "vignette": False,
+        "out": os.path.join(HERE, "outro_cinematic_light.mp4"),
+        "frames": "outro_frames_light",
+    },
+}
+THEME = "dark"
+
+
+def set_theme(name):
+    """Select the outro palette ("dark" | "light"). Returns the output path."""
+    global THEME, BG, INK, SUB, BOOT_INK, PROMPT, ROLE, CTA_SUB, LABEL, SPARK
+    global FLARE, FLARE_ALPHA, STREAK, STREAK_ALPHA, _PALETTE3, STAR_ALPHA, TEXT_GLOW
+    global RING_GLOW, VIGNETTE, OUT, FRAMES
+    t = THEMES[name]
+    THEME = name
+    BG = t["bg"]
+    INK, SUB, BOOT_INK, PROMPT = t["ink"], t["sub"], t["boot"], t["prompt"]
+    ROLE, CTA_SUB, LABEL, SPARK = t["role"], t["cta_sub"], t["label"], t["spark"]
+    FLARE = t["flare"] or lerp(WHITE, BLUE, 0.3)
+    FLARE_ALPHA = t["flare_alpha"]
+    STREAK = t["streak"] or lerp(WHITE, BLUE, 0.25)
+    STREAK_ALPHA = t["streak_alpha"]
+    _PALETTE3 = list(t["star3"])
+    STAR_ALPHA = t["star_alpha"]
+    TEXT_GLOW, RING_GLOW = t["text_glow"], t["ring_glow"]
+    VIGNETTE = t["vignette"]
+    OUT = t["out"]
+    FRAMES = os.environ.get("OUTRO_FRAMES",
+                            os.path.join(HERE, "_cache", t["frames"]))
+    return OUT
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -171,7 +260,7 @@ def draw_ambient(base, t, dim=1.0):
     d = ImageDraw.Draw(base)
     for i in range(N_STARS):
         tw = 0.45 + 0.55 * math.sin(_star_ph[i] + t * _star_sp[i])
-        a = int(150 * tw * dim)
+        a = int(STAR_ALPHA * tw * dim)
         if a <= 3:
             continue
         y = (_star_y[i] - _star_dy[i] * t) % H
@@ -196,13 +285,13 @@ def draw_warp(base, t, p1):
         if a <= 4:
             continue
         d.line([(tx, ty), (hx, hy)], fill=rgba(col, a), width=2)
-        d.ellipse([hx - 2.2, hy - 2.2, hx + 2.2, hy + 2.2], fill=rgba(WHITE, a))
+        d.ellipse([hx - 2.2, hy - 2.2, hx + 2.2, hy + 2.2], fill=rgba(SPARK, a))
     # central flare: grows, then collapses as the ring takes over
     flare = new_layer()
     fd = ImageDraw.Draw(flare)
     fr = 30 + 150 * ease_out_cubic(clamp(p1 / 0.7))
-    fa = int(230 * (smooth(0.0, 0.25, p1) * (1 - smooth(0.5, 0.85, p1))))
-    fd.ellipse([CX - fr, CY - fr, CX + fr, CY + fr], fill=rgba(lerp(WHITE, BLUE, 0.3), fa))
+    fa = int(230 * FLARE_ALPHA * (smooth(0.0, 0.25, p1) * (1 - smooth(0.5, 0.85, p1))))
+    fd.ellipse([CX - fr, CY - fr, CX + fr, CY + fr], fill=rgba(FLARE, fa))
     flare = glow(flare, 55, 1.2)
     base.alpha_composite(glow(lyr, 6, 1.1))
     base.alpha_composite(flare)
@@ -229,9 +318,9 @@ def scene1_terminal(base, t, alpha):
         p = clamp((t - st) / _TYPE_DUR)
         n = max(1, int(round(p * len(line))))
         y = y0 + i * lh
-        d.text((x0, y), ">", font=mf, fill=rgba(GREEN, 255))
+        d.text((x0, y), ">", font=mf, fill=rgba(PROMPT, 255))
         shown = line[:n]
-        d.text((x0 + 40, y), shown, font=mf, fill=rgba((225, 232, 240), 255))
+        d.text((x0 + 40, y), shown, font=mf, fill=rgba(BOOT_INK, 255))
         # blinking cursor block on the line currently typing / last line
         typing = p < 1.0
         last = i == len(_BOOT) - 1
@@ -240,7 +329,7 @@ def scene1_terminal(base, t, alpha):
             if typing or blink:
                 cw = d.textlength(shown, font=mf)
                 cx = x0 + 40 + cw + 4
-                d.rectangle([cx, y + 6, cx + 16, y + 40], fill=rgba(GREEN, 230))
+                d.rectangle([cx, y + 6, cx + 16, y + 40], fill=rgba(PROMPT, 230))
     scale_alpha(lyr, alpha)
     base.alpha_composite(lyr)
 
@@ -278,8 +367,8 @@ def scene2_logo(base, t, alpha):
     scl = 0.82 + 0.18 * ease_out_back(clamp((t - 0.72) / 0.6))
     rr = int(r * clamp(scl, 0.5, 1.15))
     ring = draw_ring(CX, CY, rr, 12, reveal)
-    base.alpha_composite(scale_alpha(glow(ring, 26, 1.3), alpha * 0.9))
-    base.alpha_composite(scale_alpha(glow(ring, 10, 1.1), alpha))
+    base.alpha_composite(scale_alpha(glow(ring, 26, 1.3), alpha * 0.9 * RING_GLOW))
+    base.alpha_composite(scale_alpha(glow(ring, 10, 1.1), alpha * RING_GLOW))
     base.alpha_composite(scale_alpha(ring.copy(), alpha))
 
     # logo + text appear a beat after the ring
@@ -291,15 +380,15 @@ def scene2_logo(base, t, alpha):
 
     # RWA wordmark inside the ring
     lf = font(150, "Black")
-    draw_text_spaced(d, (0, CY - 118), "RWA", lf, rgba(WHITE, 255),
+    draw_text_spaced(d, (0, CY - 118), "RWA", lf, rgba(INK, 255),
                      tracking=6, anchor_center=CX)
     tf = font(26, "Semibold")
-    draw_text_spaced(d, (0, CY + 55), "CODE. SOLVE. ELEVATE.", tf, rgba(GRAY, 255),
+    draw_text_spaced(d, (0, CY + 55), "CODE. SOLVE. ELEVATE.", tf, rgba(SUB, 255),
                      tracking=8, anchor_center=CX)
 
     # Name: RAO WAQAS AKRAM  (WAQAS in accent)
     nf = font(72, "Heavy")
-    parts = [("RAO ", WHITE), ("WAQAS", BLUE), (" AKRAM", WHITE)]
+    parts = [("RAO ", INK), ("WAQAS", BLUE), (" AKRAM", INK)]
     total = sum(d.textlength(p, font=nf) for p, _ in parts)
     x = CX - total / 2
     ny = 990
@@ -312,7 +401,7 @@ def scene2_logo(base, t, alpha):
     role = "SOFTWARE ENGINEERING MENTOR"
     rw = spaced_width(d, role, rf, 6)
     ry = 1110
-    draw_text_spaced(d, (0, ry), role, rf, rgba((200, 208, 218), 255),
+    draw_text_spaced(d, (0, ry), role, rf, rgba(ROLE, 255),
                      tracking=6, anchor_center=CX)
     ruley = ry + 22
     d.line([(CX - rw / 2 - 70, ruley), (CX - rw / 2 - 24, ruley)], fill=rgba(BLUE, 220), width=3)
@@ -328,7 +417,8 @@ def scene2_logo(base, t, alpha):
     if dy:
         from PIL import ImageChops
         lyr = ImageChops.offset(lyr, 0, dy)
-    base.alpha_composite(scale_alpha(glow(lyr, 14, 0.5), la * 0.5))
+    if TEXT_GLOW:
+        base.alpha_composite(scale_alpha(glow(lyr, 14, 0.5), la * 0.5 * TEXT_GLOW))
     base.alpha_composite(scale_alpha(lyr, la))
 
 
@@ -392,7 +482,7 @@ def draw_rocket(d, cx, cy, s):
     # body
     d.polygon([(cx, cy - s), (cx + 0.32 * s, cy - 0.2 * s),
                (cx + 0.20 * s, cy + 0.45 * s), (cx - 0.20 * s, cy + 0.45 * s),
-               (cx - 0.32 * s, cy - 0.2 * s)], fill=WHITE)
+               (cx - 0.32 * s, cy - 0.2 * s)], fill=INK)
     d.ellipse([cx - 0.14 * s, cy - 0.35 * s, cx + 0.14 * s, cy - 0.07 * s], fill=BLUE)
     # fins
     d.polygon([(cx - 0.20 * s, cy + 0.15 * s), (cx - 0.42 * s, cy + 0.5 * s),
@@ -432,7 +522,7 @@ def scene3_cta(base, t, alpha):
     hx = CX - total / 2 - 30
     hy = 470
     rise = (1 - smooth(1.82, 2.02, t)) * 50
-    d.text((hx, hy - rise), "FO", font=hf, fill=rgba(WHITE, 255))
+    d.text((hx, hy - rise), "FO", font=hf, fill=rgba(INK, 255))
     d.text((hx + fo_w, hy - rise), "LLOW", font=hf, fill=rgba(BLUE, 255))
     draw_rocket(d, hx + total + 78, hy + 60 - rise, 78)
 
@@ -442,11 +532,12 @@ def scene3_cta(base, t, alpha):
 
     sf = font(38, "Semibold")
     sub = "LET'S GROW TOGETHER"
-    draw_text_spaced(d, (0, hy + 270), sub, sf, rgba((215, 222, 232), 255),
+    draw_text_spaced(d, (0, hy + 270), sub, sf, rgba(CTA_SUB, 255),
                      tracking=7, anchor_center=CX)
 
     scale_alpha(lyr, alpha)
-    base.alpha_composite(scale_alpha(glow(lyr, 16, 0.4), alpha * 0.4))
+    if TEXT_GLOW:
+        base.alpha_composite(scale_alpha(glow(lyr, 16, 0.4), alpha * 0.4 * TEXT_GLOW))
     base.alpha_composite(lyr)
 
     # Social icons pop-in (staggered, overshoot) + labels
@@ -473,8 +564,9 @@ def scene3_cta(base, t, alpha):
             a = rs.split()[3].point(lambda q: int(q * ia))
             rs.putalpha(a)
         # icon glow
-        gl = glow(rs, 16, 0.7)
-        base.alpha_composite(gl, (int(icx - sz / 2), int(icy - sz / 2)))
+        if TEXT_GLOW:
+            gl = scale_alpha(glow(rs, 16, 0.7), TEXT_GLOW)
+            base.alpha_composite(gl, (int(icx - sz / 2), int(icy - sz / 2)))
         base.alpha_composite(rs, (int(icx - sz / 2), int(icy - sz / 2)))
         # label
         if p > 0.5:
@@ -483,7 +575,7 @@ def scene3_cta(base, t, alpha):
             ld = ImageDraw.Draw(base)
             la = int(200 * clamp((p - 0.5) / 0.5))
             ld.text((icx - lw / 2, icy + base_s / 2 + 22), lbl, font=lblf,
-                    fill=rgba((170, 180, 195), la))
+                    fill=rgba(LABEL, la))
 
     # three progress dots
     dd = ImageDraw.Draw(base)
@@ -546,16 +638,20 @@ def frame(t):
             sd = ImageDraw.Draw(sl)
             yb = CY if center < 1.0 else 560
             sd.rectangle([0, yb - width // 2, W, yb + width // 2],
-                         fill=rgba(lerp(WHITE, BLUE, 0.25), int(200 * sa)))
+                         fill=rgba(STREAK, int(STREAK_ALPHA * sa)))
             sl = glow(sl, 60, 1.0)
             base.alpha_composite(sl)
 
     rgb = np.asarray(base.convert("RGB"), np.float32)
-    rgb = np.clip(rgb * _VIG, 0, 255).astype(np.uint8)
-    return Image.fromarray(rgb, "RGB")
+    if VIGNETTE:
+        # A darkening vignette is a black-background device; on white it would
+        # only grey the corners.
+        rgb = rgb * _VIG
+    return Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), "RGB")
 
 
-def main():
+def main(theme="dark"):
+    out = set_theme(theme)
     os.makedirs(FRAMES, exist_ok=True)
     n = int(round(DUR * FPS))
     for i in range(n):
@@ -568,10 +664,30 @@ def main():
          "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
          "-vf", "format=yuv420p", "-c:v", "libx264", "-crf", "18", "-preset", "slow",
          "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-         "-c:a", "aac", "-b:a", "192k", "-shortest", OUT, "-loglevel", "error"],
+         "-c:a", "aac", "-b:a", "192k", "-shortest", out, "-loglevel", "error"],
         check=True)
-    print("cinematic outro ->", OUT, f"({n} frames @ {FPS}fps)")
+    print("cinematic outro ->", out, f"({theme} theme, {n} frames @ {FPS}fps)")
+    return out
+
+
+def ensure(theme="dark"):
+    """Path to the outro for `theme`, rendering it once if it is not built yet.
+
+    The file is a static brand asset shared by every question, so this is a
+    build-once: the frame render is ~150 Pillow composites and only pays off
+    being cached.
+    """
+    out = THEMES[theme]["out"]
+    if not os.path.exists(out):
+        print(f"rendering the {theme} cinematic outro (one-off)...")
+        main(theme)
+    return out
+
+
+# Initialise the module-level palette. Dark is the default so every existing
+# caller — and every reel already shipped — is unaffected.
+set_theme("dark")
 
 
 if __name__ == "__main__":
-    main()
+    main("light" if "--light" in sys.argv else "dark")

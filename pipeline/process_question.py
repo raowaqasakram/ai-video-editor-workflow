@@ -31,6 +31,9 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
   "denoise":      false,      # gentle noise reduction — only for rough audio
   "caption_y":    null,       # null = the safe default (overlays.CAPTION_CENTER_Y)
   "background":   "blur",     # fill around the footage band: "blur" | "white"
+  "intro_outro":  "dark",     # palette of the intro CARD and the brand OUTRO:
+                              # "white" (matches a white-fill body) | "dark"
+                              # (the original near-black cinematic pair)
   "caption_theme": null,      # null = whatever the background implies
   "face_crop":    null,       # "w:h:x:y" in SOURCE pixels; null = the measured
                               # default, scaled to the source resolution. Set it
@@ -68,6 +71,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_reel as br  # noqa: E402
 import encode  # noqa: E402
+import outro_cinematic  # noqa: E402
 import overlays as ro  # noqa: E402
 import silence  # noqa: E402
 import screenshare_vertical as ssv  # noqa: E402
@@ -78,6 +82,12 @@ import verify_reel as qc  # noqa: E402
 TITLE_HARD_LIMIT = 100
 TITLE_TARGET = 70
 DESCRIPTION_LIMIT = 5000
+
+# `intro_outro` is spelled in the same vocabulary as `background` ("white"), while
+# the renderers name their palettes "light"/"dark". This is the one place the two
+# meet. A missing field reads as "dark" — the pair every reel shipped before
+# 2026-08-06 ends and opens with.
+INTRO_OUTRO_THEMES = {"white": "light", "light": "light", "dark": "dark"}
 
 TEMPLATE = {
     "question": "REPLACE WITH THE VIEWER QUESTION",
@@ -95,7 +105,13 @@ TEMPLATE = {
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
-    "background": "blur",
+    # The standing brief is a WHITE video (feedback-white-fill-equal-borders),
+    # so a NEW question starts there: white fill behind the footage and a white
+    # intro card / outro to book-end it. A config that predates these fields is
+    # read with the old defaults ("blur"/"dark"), so nothing already shipped
+    # re-renders differently.
+    "background": "white",
+    "intro_outro": "white",
     "caption_theme": None,
     "face_crop": None,
     "grade_crop": None,
@@ -269,6 +285,11 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
     caption_theme = (cfg.get("caption_theme")
                      or ssv.BACKGROUND_CAPTION_THEME[background])
 
+    # The intro card and the outro book-end the same video, so they are one
+    # choice, not two. "white" is spelled the way `background` is; it maps to the
+    # "light" palette name the renderers use.
+    card_theme = INTRO_OUTRO_THEMES[cfg.get("intro_outro") or "dark"]
+
     # 0) prepare the source: cut dead air and apply the reel speed, in ONE encode.
     #    `captions`/`tech` are authored in the RAW clip's timebase; this step
     #    returns the mapping needed to move them onto the prepared source, so the
@@ -325,7 +346,7 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         quality=quality,
         denoise=cfg.get("denoise", False),
         caption_y=caption_y, caption_theme=caption_theme,
-        card_design=card_design)
+        card_design=card_design, card_theme=card_theme)
 
     # 4) upload deliverables (title/description/hashtags/metadata/subtitles) — always
     _write_metadata(cfg, out_dir, reel)
@@ -337,7 +358,7 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
     if verify:
         body_dur = br.dur(body)
         outro_part = br._outro_part(
-            cfg.get("outro") or os.path.join(br.HERE, "outro_cinematic.mp4"),
+            cfg.get("outro") or outro_cinematic.ensure(card_theme),
             encode.profile(quality))
         expected = br.CARD_DUR + body_dur + br.dur(outro_part)
         report = qc.verify(reel, expect_duration=expected,

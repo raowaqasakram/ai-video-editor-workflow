@@ -35,6 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import audio_master  # noqa: E402
 import encode  # noqa: E402
+import outro_cinematic  # noqa: E402
 import overlays as ro  # noqa: E402
 import tech_overlays as tov  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -156,7 +157,8 @@ def _outro_part(outro, p):
 def build(body, out_dir, question, asker, name, title,
           caps=None, outro=None, out_name="REEL.mp4", tech=None,
           quality="final", orientation="vertical", denoise=False,
-          caption_y=None, caption_theme="dark", card_design=0):
+          caption_y=None, caption_theme="dark", card_design=0,
+          card_theme="dark"):
     """Assemble the finished reel and return its path.
 
     Args:
@@ -177,12 +179,19 @@ def build(body, out_dir, question, asker, name, title,
             no plate) — the latter belongs with the white-fill framing.
         card_design: index or name into overlays.CARD_DESIGNS. Questions rotate
             through the pool so consecutive reels do not open identically.
+        card_theme: palette for the intro card AND the brand outro (they book-end
+            the same video, so they are one decision): "dark" is the original
+            near-black pair, "light" is the white pair that matches a white-fill
+            body. An explicit `outro` path always wins over the theme's default.
     """
     os.makedirs(out_dir, exist_ok=True)
     work = os.path.join(out_dir, "_reel_work")
     os.makedirs(work, exist_ok=True)
     p = encode.profile(quality, orientation)
-    outro = outro or os.path.join(HERE, "outro_cinematic.mp4")
+    # The light outro is built on first use and then cached like any other brand
+    # asset — the dark one has been in the repo since it was first rendered.
+    outro = outro or outro_cinematic.ensure(
+        "light" if card_theme == "light" else "dark")
 
     # A cheap render must never be mistaken for — or overwrite — the shipping
     # file, so its quality is stamped into the filename.
@@ -195,7 +204,8 @@ def build(body, out_dir, question, asker, name, title,
 
     card_png = os.path.join(out_dir, "question_card.png")
     lt_png = os.path.join(out_dir, "name_tag.png")
-    ro.make_question_card(question, asker, card_png, card_design)
+    ro.make_question_card(question, asker, card_png, card_design,
+                          theme=card_theme)
     ro.make_lower_third(name, title, lt_png)
 
     bdur = dur(body)
@@ -239,4 +249,5 @@ if __name__ == "__main__":
           quality=meta.get("quality", "final"),
           denoise=meta.get("denoise", False),
           caption_y=meta.get("caption_y"),
-          caption_theme=meta.get("caption_theme", "dark"))
+          caption_theme=meta.get("caption_theme", "dark"),
+          card_theme=meta.get("card_theme", "dark"))
