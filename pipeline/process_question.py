@@ -35,6 +35,9 @@ deliverables, and QCs the export.  (See feedback-reuse-code-runtime.)
                               # "white" (matches a white-fill body) | "dark"
                               # (the original near-black cinematic pair)
   "caption_theme": null,      # null = whatever the background implies
+  "caption_font":  null,      # null = default SF caption typeface; or an
+                              # overlays.FONT_FAMILIES key ("avenir") for a
+                              # different caption look on this video only
   "face_crop":    null,       # "w:h:x:y" in SOURCE pixels; null = the measured
                               # default, scaled to the source resolution. Set it
                               # when the speaker is not centred in frame.
@@ -105,6 +108,7 @@ TEMPLATE = {
     "auto_grade": True,
     "denoise": False,
     "caption_y": None,
+    "caption_font": None,
     # The standing brief is a WHITE video (feedback-white-fill-equal-borders),
     # so a NEW question starts there: white fill behind the footage and a white
     # intro card / outro to book-end it. A config that predates these fields is
@@ -346,7 +350,8 @@ def process(clip, out_dir, force=False, quality="final", verify=True):
         quality=quality,
         denoise=cfg.get("denoise", False),
         caption_y=caption_y, caption_theme=caption_theme,
-        card_design=card_design, card_theme=card_theme)
+        card_design=card_design, card_theme=card_theme,
+        caption_font=cfg.get("caption_font"))
 
     # 4) upload deliverables (title/description/hashtags/metadata/subtitles) — always
     _write_metadata(cfg, out_dir, reel)

@@ -19,9 +19,31 @@ SF = "/System/Library/Fonts/SFNS.ttf"
 ARIAL_BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 ARIAL = "/System/Library/Fonts/Supplemental/Arial.ttf"
 
+# Alternate caption typefaces (see build_reel's `caption_font`). SF is a
+# variable font (weight set via set_variation_by_name); the others are TTCs
+# with each weight baked into its own face index — no variation axis to set.
+AVENIR_NEXT = "/System/Library/Fonts/Avenir Next.ttc"
+AVENIR_NEXT_WEIGHTS = {"Heavy": 8, "Bold": 0, "Semibold": 2, "Regular": 7}
+HELVETICA_NEUE = "/System/Library/Fonts/HelveticaNeue.ttc"
+# No Heavy/Black face in this ttc — Bold is the heaviest non-condensed weight.
+HELVETICA_NEUE_WEIGHTS = {"Heavy": 1, "Bold": 1, "Semibold": 10, "Regular": 0}
+FONT_FAMILIES = {"avenir": (AVENIR_NEXT, AVENIR_NEXT_WEIGHTS),
+                  "helvetica_neue": (HELVETICA_NEUE, HELVETICA_NEUE_WEIGHTS)}
 
-def font(size, weight="Bold"):
-    """Load SF at a given size/weight, falling back to Arial."""
+
+def font(size, weight="Bold", family=None):
+    """Load a font at a given size/weight, falling back to Arial.
+
+    `family`: None for the default SF; or a key into FONT_FAMILIES to render
+    with a different caption typeface (a per-video creative choice, not a
+    brand-wide default — see config.json's `caption_font`).
+    """
+    if family:
+        path, weights = FONT_FAMILIES[family]
+        try:
+            return ImageFont.truetype(path, size, index=weights.get(weight, 0))
+        except Exception:
+            pass
     try:
         f = ImageFont.truetype(SF, size)
         try:
@@ -430,7 +452,7 @@ CAPTION_THEMES = {
 }
 
 
-def make_caption(text, highlights, out, center_y=None, theme="dark"):
+def make_caption(text, highlights, out, center_y=None, theme="dark", font_family=None):
     """Render a transparent lower-third caption PNG with keyword highlighting.
 
     Args:
@@ -441,11 +463,13 @@ def make_caption(text, highlights, out, center_y=None, theme="dark"):
             override only with a value that still clears the platform UI band.
         theme: "dark" (white text on a dark plate, for captions over footage) or
             "light" (dark text, no plate, for captions on the white fill band).
+        font_family: None for the default SF, or a FONT_FAMILIES key for a
+            different caption typeface on this video.
     """
     scheme = CAPTION_THEMES[theme]
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    cf = font(60, "Heavy")
+    cf = font(60, "Heavy", family=font_family)
     hl = {h.lower() for h in highlights}
     lines = wrap(d, text, cf, W - 200)[:2]  # max 2 lines
 
