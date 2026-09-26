@@ -17,6 +17,32 @@ Version: 1.0
 
 ---
 
+# Using This Repo Yourself
+
+This started as one creator's personal pipeline, tuned for one StreamYard room
+and a Roman-Urdu/English speaker — so a few things to know if you're forking it:
+
+* **No cloud API keys required.** Everything runs locally (FFmpeg, Tesseract,
+  OpenCV, Whisper). There is nothing to put in a `.env` file to get started.
+* **The crop/framing numbers are calibrated, not generic.** `config/settings.yaml`
+  (`foreground_crop`, `source_crop`, caption `center_y`, etc.) and the face crop
+  described in `RUNBOOK.md` were measured against one person's camera framing.
+  Re-measure these for your own footage — see RUNBOOK.md §"Smart Cropping" /
+  "Environment gotchas".
+* **`config/branding.yaml` is a real creator's identity** (name, handle, colors)
+  used as the shipped default outro/name-tag branding — swap it for your own
+  before publishing videos.
+* **Media is intentionally not in this repo.** `INPUT/`, `OUTPUT/`,
+  `READY_TO_UPLOAD/`, `TEMP/`, `logs/*`, and all `*.mp4`/`*.mov`/`*.mkv`/`*.wav`
+  files are gitignored (see `.gitignore`) — only the code and config templates
+  are version-controlled. Drop your own livestream file into `INPUT/` locally.
+* **The real, working entry point is `pipeline/process_question.py`**, not the
+  `app/main.py` CLI described later in this file (that CLI is aspirational —
+  see the note under "CLI Commands"). Follow `RUNBOOK.md` to actually produce a
+  video.
+
+---
+
 # Overview
 
 AI Content Studio is an automated content production pipeline designed for software engineering creators.
@@ -56,30 +82,16 @@ This system is optimized for:
 
 # Final Output
 
-One 90-minute livestream can become:
+One 90-minute livestream becomes a batch of publish-ready deliverables per question:
 
-```
-20-30 short videos
-
-+
-
-titles
-
-+
-
-descriptions
-
-+
-
-hashtags
-
-+
-
-thumbnail ideas
-
-+
-
-LinkedIn posts
+```mermaid
+flowchart LR
+    L[90-min livestream] --> Q["20-30 short videos"]
+    Q --> T[Titles]
+    Q --> D[Descriptions]
+    Q --> H[Hashtags]
+    Q --> TH[Thumbnail ideas]
+    Q --> LI[LinkedIn posts]
 ```
 
 ---
@@ -227,46 +239,17 @@ python app/main.py process
 
 # Processing Flow
 
-The system will:
-
-```
-1. Analyze video
-
-↓
-
-2. Detect StreamYard questions
-
-↓
-
-3. Extract clips
-
-↓
-
-4. Generate transcript
-
-↓
-
-5. Create subtitles
-
-↓
-
-6. Find best hooks
-
-↓
-
-7. Apply captions
-
-↓
-
-8. Create vertical videos
-
-↓
-
-9. Generate metadata
-
-↓
-
-10. Create review dashboard
+```mermaid
+flowchart TD
+    A[Analyze video] --> B[Detect StreamYard questions]
+    B --> C[Extract clips]
+    C --> D[Generate transcript]
+    D --> E[Create subtitles]
+    E --> F[Find best hooks]
+    F --> G[Apply captions]
+    G --> H[Create vertical videos]
+    H --> I[Generate metadata]
+    I --> J[Create review dashboard]
 ```
 
 ---

@@ -218,60 +218,21 @@ python main.py process
 
 Execution:
 
-```
-Load Configuration
-
-        ↓
-
-Validate Input Video
-
-        ↓
-
-Analyze Video Metadata
-
-        ↓
-
-Run OCR Detection
-
-        ↓
-
-Generate Question Timeline
-
-        ↓
-
-Extract Clips
-
-        ↓
-
-Generate Transcript
-
-        ↓
-
-Analyze Hook
-
-        ↓
-
-Generate Captions
-
-        ↓
-
-Enhance Video
-
-        ↓
-
-Create Vertical Version
-
-        ↓
-
-Generate Metadata
-
-        ↓
-
-Generate Dashboard
-
-        ↓
-
-Complete
+```mermaid
+flowchart TD
+    A[Load Configuration] --> B[Validate Input Video]
+    B --> C[Analyze Video Metadata]
+    C --> D[Run OCR Detection]
+    D --> E[Generate Question Timeline]
+    E --> F[Extract Clips]
+    F --> G[Generate Transcript]
+    G --> H[Analyze Hook]
+    H --> I[Generate Captions]
+    I --> J[Enhance Video]
+    J --> K[Create Vertical Version]
+    K --> L[Generate Metadata]
+    L --> M[Generate Dashboard]
+    M --> N[Complete]
 ```
 
 ---

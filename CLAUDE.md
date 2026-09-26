@@ -56,56 +56,20 @@ INPUT/
 
 # Main Processing Pipeline
 
-```
-Livestream Video
-
-        ↓
-
-StreamYard Question Detection
-
-        ↓
-
-OCR Processing
-
-        ↓
-
-Question Based Clip Extraction
-
-        ↓
-
-Speech Analysis
-
-        ↓
-
-Hook Optimization
-
-        ↓
-
-Professional Caption Generation
-
-        ↓
-
-Video Enhancement
-
-        ↓
-
-Vertical Reel Creation
-
-        ↓
-
-AI Metadata Generation
-
-        ↓
-
-Quality Scoring
-
-        ↓
-
-Review Dashboard
-
-        ↓
-
-Approved Content
+```mermaid
+flowchart TD
+    A[Livestream Video] --> B[StreamYard Question Detection]
+    B --> C[OCR Processing]
+    C --> D[Question Based Clip Extraction]
+    D --> E[Speech Analysis]
+    E --> F[Hook Optimization]
+    F --> G[Professional Caption Generation]
+    G --> H[Video Enhancement]
+    H --> I[Vertical Reel Creation]
+    I --> J[AI Metadata Generation]
+    J --> K[Quality Scoring]
+    K --> L[Review Dashboard]
+    L --> M[Approved Content]
 ```
 
 ---

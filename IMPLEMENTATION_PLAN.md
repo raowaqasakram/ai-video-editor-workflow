@@ -615,20 +615,9 @@ OCR detector test.
 
 Full pipeline:
 
-```
-video
-
-↓
-
-questions
-
-↓
-
-clips
-
-↓
-
-metadata
+```mermaid
+flowchart LR
+    A[video] --> B[questions] --> C[clips] --> D[metadata]
 ```
 
 ---
