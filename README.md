@@ -1,10 +1,25 @@
-# README.md
+<div align="center">
 
 # AI Content Studio
 
-## StreamYard Livestream → AI Powered Short-Form Content Generator
+### StreamYard Livestream → AI-Powered Short-Form Content Generator
 
-Version: 1.0
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![FFmpeg](https://img.shields.io/badge/video-FFmpeg-green)](https://ffmpeg.org/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL-lightgrey)]()
+[![No Cloud API Keys](https://img.shields.io/badge/cloud%20API%20keys-none%20required-success)]()
+[![License](https://img.shields.io/badge/license-unspecified-inactive)]()
+
+**One command turns a 90-minute livestream into 20-30 publish-ready vertical reels** —
+clipped, transcribed, captioned, branded, scored, and ready for review.
+
+[Quick Start](#quick-start) •
+[How It Works](#how-it-works) •
+[Using This Repo Yourself](#using-this-repo-yourself) •
+[Configuration](#configuration) •
+[Troubleshooting](#troubleshooting)
+
+</div>
 
 ---
 
@@ -17,70 +32,54 @@ Version: 1.0
 
 ---
 
-# Using This Repo Yourself
+## Using This Repo Yourself
 
 This started as one creator's personal pipeline, tuned for one StreamYard room
 and a Roman-Urdu/English speaker — so a few things to know if you're forking it:
 
-* **No cloud API keys required.** Everything runs locally (FFmpeg, Tesseract,
-  OpenCV, Whisper). There is nothing to put in a `.env` file to get started.
-* **The crop/framing numbers are calibrated, not generic.** `config/settings.yaml`
-  (`foreground_crop`, `source_crop`, caption `center_y`, etc.) and the face crop
-  described in `RUNBOOK.md` were measured against one person's camera framing.
-  Re-measure these for your own footage — see RUNBOOK.md §"Smart Cropping" /
-  "Environment gotchas".
-* **`config/branding.yaml` is a real creator's identity** (name, handle, colors)
-  used as the shipped default outro/name-tag branding — swap it for your own
-  before publishing videos.
-* **Media is intentionally not in this repo.** `INPUT/`, `OUTPUT/`,
-  `READY_TO_UPLOAD/`, `TEMP/`, `logs/*`, and all `*.mp4`/`*.mov`/`*.mkv`/`*.wav`
-  files are gitignored (see `.gitignore`) — only the code and config templates
-  are version-controlled. Drop your own livestream file into `INPUT/` locally.
-* **The real, working entry point is `pipeline/process_question.py`**, not the
-  `app/main.py` CLI described later in this file (that CLI is aspirational —
-  see the note under "CLI Commands"). Follow `RUNBOOK.md` to actually produce a
-  video.
+| | |
+|---|---|
+| **No cloud API keys** | Everything runs locally (FFmpeg, Tesseract, OpenCV, Whisper). Nothing to put in a `.env` file to get started. |
+| **Crop/framing is calibrated, not generic** | `config/settings.yaml` (`foreground_crop`, `source_crop`, caption `center_y`, etc.) and the face crop in `RUNBOOK.md` were measured against one person's camera framing. Re-measure for your own footage — see RUNBOOK.md §"Smart Cropping" / "Environment gotchas". |
+| **Branding is a real identity** | `config/branding.yaml` ships with the original creator's name, handle, and colors as the default outro/name-tag branding — swap it for your own before publishing. |
+| **No media in this repo** | `INPUT/`, `OUTPUT/`, `READY_TO_UPLOAD/`, `TEMP/`, `logs/*`, and all `*.mp4`/`*.mov`/`*.mkv`/`*.wav` files are gitignored — only code and config templates are version-controlled. Drop your own livestream into `INPUT/` locally. |
+| **Real entry point** | `pipeline/process_question.py` is the working, battle-tested tool. The `app/main.py` CLI described further down is aspirational — see the note under [CLI Commands](#cli-commands). Follow `RUNBOOK.md` to actually produce a video. |
 
 ---
 
-# Overview
+## Overview
 
-AI Content Studio is an automated content production pipeline designed for software engineering creators.
+AI Content Studio is an automated content production pipeline for software engineering
+creators. It converts long-form livestream recordings into professional short-form
+videos — automatically:
 
-It converts long-form livestream recordings into professional short-form videos.
+- Detecting StreamYard audience questions
+- Extracting individual answers into clips
+- Generating subtitles and professional captions
+- Improving video quality (audio, color, sharpening)
+- Creating TikTok / Reels / Shorts vertical versions
+- Generating titles, descriptions, and hashtags
+- Scoring content quality
+- Building an approval workflow
 
-The system automatically:
-
-* Detects StreamYard audience questions
-* Extracts individual answers
-* Generates subtitles
-* Creates professional captions
-* Improves video quality
-* Creates TikTok/Reels/Shorts versions
-* Generates titles and descriptions
-* Scores content quality
-* Creates an approval workflow
-
----
-
-# Target Content
-
-This system is optimized for:
-
-* Software Engineering
-* Java
-* Spring Boot
-* Docker
-* Kubernetes
-* Cloud
-* AI Engineering
-* System Design
-* Developer Career Advice
-* Technical Mentoring
+**Optimized for:** Software Engineering · Java · Spring Boot · Docker · Kubernetes ·
+Cloud · AI Engineering · System Design · Developer Career Advice · Technical Mentoring
 
 ---
 
-# Final Output
+## How It Works
+
+```mermaid
+flowchart TD
+    A[Analyze video] --> B[Detect StreamYard questions]
+    B --> C[Extract clips]
+    C --> D[Generate transcript]
+    D --> E[Find best hooks]
+    E --> F[Apply captions]
+    F --> G[Create vertical videos]
+    G --> H[Generate metadata]
+    H --> I[Review dashboard]
+```
 
 One 90-minute livestream becomes a batch of publish-ready deliverables per question:
 
@@ -96,335 +95,78 @@ flowchart LR
 
 ---
 
-# Project Structure
+## Quick Start
+
+```bash
+# 1. Check prerequisites
+python --version     # 3.11+
+ffmpeg -version       # required for all video processing
+
+# 2. Set up the environment
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. Drop your livestream in
+mkdir -p INPUT && cp /path/to/your/livestream.mp4 INPUT/
+
+# 4. Run the real per-question pipeline (see RUNBOOK.md for the full workflow)
+python3 pipeline/trim.py INPUT/livestream.mp4 clip.mp4 --start 18:03 --end 19:27
+python3 pipeline/transcribe.py clip.mp4 Q_dir large-v3 ur
+python3 pipeline/process_question.py clip.mp4 Q_dir
+```
+
+| Requirement | Notes |
+|---|---|
+| **OS** | macOS or Linux recommended; Windows works via WSL |
+| **Python** | 3.11+ |
+| **FFmpeg** | No cloud transcoding — all video processing is local |
+
+Output lands in `OUTPUT/Question_001/` with `clip.mp4`, `vertical.mp4`, `subtitles.srt`,
+`title.txt`, `description.txt`, `hashtags.txt`, and `metadata.json`. Review in
+`review.html`, approve, and approved clips move to `READY_TO_UPLOAD/`.
+
+---
+
+## Project Structure
 
 ```
 AI-Content-Studio/
-
-│
 ├── CLAUDE.md
 ├── ARCHITECTURE.md
 ├── CONFIGURATION.md
 ├── IMPLEMENTATION_PLAN.md
 ├── PROMPTS.md
+├── RUNBOOK.md              ← the real, working workflow
 │
 ├── app/
-│   └── main.py
-│
+│   └── main.py              (planned CLI — see note below)
+├── pipeline/                 ← the real, working scripts
 ├── modules/
-│
-│   ├── video/
-│   ├── ocr/
-│   ├── speech/
-│   ├── captions/
-│   ├── ai/
-│   ├── social/
-│   └── dashboard/
+│   ├── video/  ocr/  speech/  captions/  ai/  social/  dashboard/
 │
 ├── config/
-│
 │   ├── branding.yaml
 │   └── settings.yaml
 │
-├── INPUT/
-│
-├── OUTPUT/
-│
-├── READY_TO_UPLOAD/
-│
-├── TEMP/
-│
-└── logs/
+├── INPUT/  OUTPUT/  READY_TO_UPLOAD/  TEMP/  logs/   ← gitignored contents
 ```
 
 ---
 
-# Requirements
+## Configuration
 
-## Operating System
+All customization happens through `config/`:
 
-Supported:
+| File | Controls |
+|---|---|
+| `config/branding.yaml` | Creator name, fonts, colors, caption style, lower thirds |
+| `config/settings.yaml` | AI models, video quality, OCR settings, export settings |
 
-* macOS
-* Linux
-* Windows with WSL
+### Caption Style
 
-Recommended:
-
-macOS/Linux
-
----
-
-# Software Requirements
-
-Install:
-
-## Python
-
-Version:
-
-```
-Python 3.11+
-```
-
-Check:
-
-```bash
-python --version
-```
-
----
-
-## FFmpeg
-
-Required for video processing.
-
-Check:
-
-```bash
-ffmpeg -version
-```
-
----
-
-# Python Environment Setup
-
-Create environment:
-
-```bash
-python -m venv venv
-```
-
-Activate:
-
-## macOS/Linux
-
-```bash
-source venv/bin/activate
-```
-
-## Windows
-
-```bash
-venv\Scripts\activate
-```
-
----
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-# First Run
-
-Place your livestream:
-
-```
-INPUT/
-
-    livestream.mp4
-```
-
-Run:
-
-```bash
-python app/main.py process
-```
-
----
-
-# Processing Flow
-
-```mermaid
-flowchart TD
-    A[Analyze video] --> B[Detect StreamYard questions]
-    B --> C[Extract clips]
-    C --> D[Generate transcript]
-    D --> E[Create subtitles]
-    E --> F[Find best hooks]
-    F --> G[Apply captions]
-    G --> H[Create vertical videos]
-    H --> I[Generate metadata]
-    I --> J[Create review dashboard]
-```
-
----
-
-# Output Example
-
-After processing:
-
-```
-OUTPUT/
-
-Question_001/
-
-    clip.mp4
-
-    vertical.mp4
-
-    subtitles.srt
-
-    question.txt
-
-    title.txt
-
-    description.txt
-
-    hashtags.txt
-
-    metadata.json
-```
-
----
-
-# Review Process
-
-Open:
-
-```
-review.html
-```
-
-Review:
-
-* Video quality
-* Caption quality
-* Title
-* Description
-* AI score
-
-Approve selected clips.
-
-Approved clips move to:
-
-```
-READY_TO_UPLOAD/
-```
-
----
-
-# CLI Commands
-
-> The commands in this section belong to the planned `app/` entry point. The
-> **working** per-question workflow is the `pipeline/` one — see
-> [RUNBOOK.md](./RUNBOOK.md):
->
-> ```bash
-> python3 pipeline/trim.py <stream>.mp4 <clip>.mp4 --start 18:03 --end 19:27
-> python3 pipeline/transcribe.py <clip>.mp4 <Q_dir> large-v3 ur
-> python3 pipeline/process_question.py <clip>.mp4 <Q_dir>          # add --draft to iterate
-> ```
-
-## Process Everything
-
-```bash
-python app/main.py process
-```
-
----
-
-## Analyze Video Only
-
-```bash
-python app/main.py analyze
-```
-
----
-
-## Detect Questions
-
-```bash
-python app/main.py ocr
-```
-
----
-
-## Generate Clips
-
-```bash
-python app/main.py clips
-```
-
----
-
-## Generate Social Videos
-
-```bash
-python app/main.py social
-```
-
----
-
-## Generate Metadata
-
-```bash
-python app/main.py metadata
-```
-
----
-
-# Configuration
-
-All customization happens through:
-
-```
-config/
-```
-
----
-
-## Branding
-
-File:
-
-```
-config/branding.yaml
-```
-
-Controls:
-
-* Creator name
-* Fonts
-* Colors
-* Caption style
-* Lower thirds
-
----
-
-## Processing
-
-File:
-
-```
-config/settings.yaml
-```
-
-Controls:
-
-* AI models
-* Video quality
-* OCR settings
-* Export settings
-
----
-
-# Caption Style
-
-The system follows a premium developer-focused style.
-
-Characteristics:
-
-* Clean typography
-* Minimal animations
-* Technical keyword highlighting
-* High readability
-
-Example:
+Premium developer-focused style — clean typography, minimal animations, technical
+keyword highlighting, high readability:
 
 ```
 Most developers ignore
@@ -433,183 +175,88 @@ SYSTEM DESIGN
 when learning coding.
 ```
 
----
+### Models & Tooling
 
-# AI Models
-
-## OCR
-
-Primary:
-
-```
-PaddleOCR
-```
+| Purpose | Tool |
+|---|---|
+| OCR | Tesseract (see RUNBOOK.md for why over PaddleOCR/EasyOCR) |
+| Speech | Whisper (`large-v3` for best captions) |
+| Computer Vision | OpenCV — face tracking, smart cropping, screen-share detection |
 
 ---
 
-## Speech
+<details>
+<summary><strong>CLI Commands (planned <code>app/</code> entry point)</strong></summary>
 
-Primary:
+> The commands below belong to the **planned** `app/` entry point, which is not yet
+> implemented. The **working** per-question workflow is the `pipeline/` one — see
+> [RUNBOOK.md](./RUNBOOK.md):
+>
+> ```bash
+> python3 pipeline/trim.py <stream>.mp4 <clip>.mp4 --start 18:03 --end 19:27
+> python3 pipeline/transcribe.py <clip>.mp4 <Q_dir> large-v3 ur
+> python3 pipeline/process_question.py <clip>.mp4 <Q_dir>          # add --draft to iterate
+> ```
 
-```
-Whisper Large v3
-```
-
----
-
-## Computer Vision
-
-Used for:
-
-* Face tracking
-* Smart cropping
-* Screen detection
-
-Technology:
-
-```
-OpenCV
-MediaPipe
+```bash
+python app/main.py process    # process everything
+python app/main.py analyze    # analyze video only
+python app/main.py ocr        # detect questions
+python app/main.py clips      # generate clips
+python app/main.py social     # generate social videos
+python app/main.py metadata   # generate metadata
 ```
 
----
+</details>
 
-# Development Approach
+<details>
+<summary><strong>Development Approach</strong></summary>
 
-Build in phases:
+| Phase | Focus |
+|---|---|
+| 1 | Basic pipeline — OCR, clip extraction, transcript |
+| 2 | Professional editing — captions, branding, vertical videos |
+| 3 | AI intelligence — hooks, scoring, metadata |
+| 4 | Automation — publishing, analytics, content calendar |
 
-## Phase 1
+**Contribution guidelines:** follow existing architecture, use configuration files,
+include logging, include tests, avoid hardcoded values.
 
-Basic pipeline:
+</details>
 
-* OCR
-* Clip extraction
-* Transcript
+<details>
+<summary><strong>Troubleshooting</strong></summary>
 
-## Phase 2
+**OCR not detecting questions** — check StreamYard overlay visibility, OCR confidence
+threshold, and frame interval in `config/settings.yaml`.
 
-Professional editing:
+**Poor subtitle quality** — check Whisper model size, audio quality, and language
+detection.
 
-* Captions
-* Branding
-* Vertical videos
+**Slow processing** — try GPU acceleration, a wider frame sampling interval, or
+lighter FFmpeg settings.
 
-## Phase 3
+</details>
 
-AI intelligence:
+<details>
+<summary><strong>Future Roadmap</strong></summary>
 
-* Hooks
-* Scoring
-* Metadata
+- Automatic YouTube Shorts / TikTok / Facebook publishing
+- Audience analytics
+- Content recommendation engine
+- Personal knowledge base
+- AI course generation
 
-## Phase 4
-
-Automation:
-
-* Publishing
-* Analytics
-* Content calendar
-
----
-
-# Troubleshooting
-
-## OCR Not Detecting Questions
-
-Check:
-
-* StreamYard overlay visibility
-* OCR confidence threshold
-* Frame interval
-
-Configuration:
-
-```
-config/settings.yaml
-```
+</details>
 
 ---
 
-## Poor Subtitle Quality
+<div align="center">
 
-Check:
+**Project Philosophy:** not just a video editor — a Video Editor + Technical Editor +
+Content Strategist + Social Media Manager, in one pipeline.
 
-* Whisper model
-* Audio quality
-* Language detection
+*Success looks like: a creator finishes a livestream, drops one file, runs one
+command, and gets professional, publish-ready technical content.*
 
----
-
-## Slow Processing
-
-Improve:
-
-* GPU acceleration
-* Frame sampling interval
-* FFmpeg settings
-
----
-
-# Future Roadmap
-
-Planned features:
-
-* Automatic YouTube Shorts upload
-* TikTok publishing
-* Facebook publishing
-* Audience analytics
-* Content recommendation engine
-* Personal knowledge base
-* AI course generation
-
----
-
-# Contribution Guidelines
-
-Any code added should:
-
-* Follow existing architecture
-* Use configuration files
-* Include logging
-* Include tests
-* Avoid hardcoded values
-
----
-
-# Project Philosophy
-
-This is not just a video editing tool.
-
-It is an AI-powered content studio designed to help a software engineering educator consistently publish high-quality technical content.
-
-The system should behave like:
-
-```
-Video Editor
-
-+
-
-Technical Editor
-
-+
-
-Content Strategist
-
-+
-
-Social Media Manager
-```
-
----
-
-# Success Criteria
-
-The system is successful when:
-
-A creator finishes a livestream,
-
-drops one video file,
-
-runs one command,
-
-and receives professional, publish-ready technical content.
+</div>
